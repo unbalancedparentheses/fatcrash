@@ -183,4 +183,84 @@ def fit_deep_lppls(
         confidence=confidence,
         reconstruction_loss=recon_l,
         physics_loss=phys_l,
+    ), model
+
+
+def save_model(model: "torch.nn.Module", path: str) -> None:
+    """Save trained P-LNN weights to disk."""
+    import torch
+    torch.save(model.state_dict(), path)
+
+
+def load_model(path: str, window_size: int = 120) -> "torch.nn.Module":
+    """Load pre-trained P-LNN weights from disk."""
+    import torch
+    import torch.nn as nn
+
+    class PLNN(nn.Module):
+        def __init__(self, input_dim: int):
+            super().__init__()
+            self.encoder = nn.Sequential(
+                nn.Linear(input_dim, 128),
+                nn.LayerNorm(128),
+                nn.GELU(),
+                nn.Dropout(0.1),
+                nn.Linear(128, 64),
+                nn.LayerNorm(64),
+                nn.GELU(),
+                nn.Linear(64, 32),
+                nn.GELU(),
+            )
+            self.tc_head = nn.Linear(32, 1)
+            self.m_head = nn.Linear(32, 1)
+            self.omega_head = nn.Linear(32, 1)
+
+        def forward(self, x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+            h = self.encoder(x)
+            tc_raw = torch.sigmoid(self.tc_head(h)) * 0.5
+            m_raw = torch.sigmoid(self.m_head(h)) * 0.8 + 0.1
+            omega_raw = torch.sigmoid(self.omega_head(h)) * 23.0 + 2.0
+            return tc_raw, m_raw, omega_raw
+
+    model = PLNN(input_dim=window_size * 2)
+    model.load_state_dict(torch.load(path, weights_only=True))
+    model.eval()
+    return model
+
+
+def predict_with_model(
+    model: "torch.nn.Module",
+    times: npt.NDArray[np.float64],
+    log_prices: npt.NDArray[np.float64],
+    window_size: int = 120,
+) -> DeepLPPLSResult:
+    """Run prediction using a pre-trained model (no training, instant)."""
+    import torch
+
+    n = min(window_size, len(times))
+    t = times[-n:].copy()
+    lp = log_prices[-n:].copy()
+
+    t_start, t_end = t[0], t[-1]
+    t_range = t_end - t_start
+    t_norm = (t - t_start) / t_range
+    lp_norm = (lp - lp.mean()) / (lp.std() + 1e-8)
+
+    t_tensor = torch.tensor(t_norm, dtype=torch.float32)
+    lp_tensor = torch.tensor(lp_norm, dtype=torch.float32)
+    x = torch.cat([t_tensor, lp_tensor]).unsqueeze(0)
+
+    model.eval()
+    with torch.no_grad():
+        tc_frac, m_pred, omega_pred = model(x)
+        tc_norm = 1.0 + tc_frac[0, 0].item()
+        tc_actual = t_start + tc_norm * t_range
+
+    return DeepLPPLSResult(
+        tc_pred=tc_actual,
+        m_pred=m_pred[0, 0].item(),
+        omega_pred=omega_pred[0, 0].item(),
+        confidence=0.5,  # No loss info for pretrained inference
+        reconstruction_loss=0.0,
+        physics_loss=0.0,
     )

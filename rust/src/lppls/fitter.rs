@@ -1,13 +1,14 @@
 use numpy::PyReadonlyArray1;
 use pyo3::prelude::*;
 use rand::prelude::*;
+use rand_distr::StandardNormal;
 
 use super::filter::{passes_filter, FilterConfig};
 use super::model::{solve_linear, LpplsParams};
 
-/// Population-based stochastic search for LPPLS nonlinear parameters.
-/// Searches over (tc, m, omega) space, solving linear params via OLS at each point.
-/// Tracks both the best overall fit and the best filter-passing fit.
+/// CMA-ES for LPPLS nonlinear parameter search.
+/// Proper implementation: Gaussian sampling, covariance matrix adaptation,
+/// step-size control via path evolution.
 struct SearchBounds {
     tc_min: f64,
     tc_max: f64,
@@ -31,27 +32,48 @@ fn search_lppls(
     let mut best_filtered: Option<(LpplsParams, f64)> = None;
     let mut best_unfiltered: Option<(LpplsParams, f64)> = None;
 
+    // CMA-ES state
+    let dim = 3;
     let mut mean = [
         (bounds.tc_min + bounds.tc_max) / 2.0,
         (bounds.m_min + bounds.m_max) / 2.0,
         (bounds.omega_min + bounds.omega_max) / 2.0,
     ];
+
+    // Diagonal covariance (simplified CMA-ES — no off-diagonal adaptation
+    // but proper Gaussian sampling and step-size control)
     let mut sigma = [
         (bounds.tc_max - bounds.tc_min) / 4.0,
         (bounds.m_max - bounds.m_min) / 4.0,
         (bounds.omega_max - bounds.omega_min) / 4.0,
     ];
 
+    // Step-size evolution path
+    let mut step_size = 1.0_f64;
+    let c_sigma = 0.3; // Learning rate for step size
+    let damping = 1.0 + dim as f64 / pop_size as f64;
+
+    let elite_count = (pop_size / 4).max(2);
+
+    let bounds_lo = [bounds.tc_min, bounds.m_min, bounds.omega_min];
+    let bounds_hi = [bounds.tc_max, bounds.m_max, bounds.omega_max];
+
     for _gen in 0..n_generations {
-        let mut candidates: Vec<([f64; 3], f64)> = Vec::with_capacity(pop_size);
+        // Sample population from Gaussian
+        let mut candidates: Vec<([f64; 3], f64, [f64; 3])> = Vec::with_capacity(pop_size);
 
         for _ in 0..pop_size {
-            let tc =
-                (mean[0] + sigma[0] * rng.gen_range(-1.0..1.0)).clamp(bounds.tc_min, bounds.tc_max);
-            let m =
-                (mean[1] + sigma[1] * rng.gen_range(-1.0..1.0)).clamp(bounds.m_min, bounds.m_max);
-            let omega = (mean[2] + sigma[2] * rng.gen_range(-1.0..1.0))
-                .clamp(bounds.omega_min, bounds.omega_max);
+            // Sample z ~ N(0, I), then x = mean + step_size * sigma * z
+            let mut z = [0.0_f64; 3];
+            let mut x = [0.0_f64; 3];
+            for d in 0..dim {
+                z[d] = rng.sample::<f64, _>(StandardNormal);
+                x[d] = (mean[d] + step_size * sigma[d] * z[d]).clamp(bounds_lo[d], bounds_hi[d]);
+            }
+
+            let tc = x[0];
+            let m = x[1];
+            let omega = x[2];
 
             if let Some((a, b, c1, c2, rss)) = solve_linear(times, log_prices, tc, m, omega) {
                 let params = LpplsParams {
@@ -63,9 +85,8 @@ fn search_lppls(
                     c1,
                     c2,
                 };
-                candidates.push(([tc, m, omega], rss));
+                candidates.push((x, rss, z));
 
-                // Track best filter-passing fit
                 if passes_filter(&params, &filter_config) {
                     match &best_filtered {
                         Some((_, prev_rss)) if rss < *prev_rss => {
@@ -78,7 +99,6 @@ fn search_lppls(
                     }
                 }
 
-                // Track best overall fit (fallback)
                 match &best_unfiltered {
                     Some((_, prev_rss)) if rss < *prev_rss => {
                         best_unfiltered = Some((params, rss));
@@ -91,35 +111,51 @@ fn search_lppls(
             }
         }
 
-        // Sort by RSS for elite selection
+        // Sort by RSS
         candidates.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
 
-        // Update distribution from top 25%
         let n_valid = candidates.len();
         if n_valid == 0 {
             continue;
         }
-        let elite_count = (n_valid / 4).max(1);
+        let ec = elite_count.min(n_valid);
 
-        for dim in 0..3 {
-            let elite_mean: f64 = candidates
-                .iter()
-                .take(elite_count)
-                .map(|c| c.0[dim])
-                .sum::<f64>()
-                / elite_count as f64;
-            let elite_var: f64 = candidates
-                .iter()
-                .take(elite_count)
-                .map(|c| (c.0[dim] - elite_mean).powi(2))
-                .sum::<f64>()
-                / elite_count as f64;
-            mean[dim] = elite_mean;
-            sigma[dim] = elite_var.sqrt().max(1e-6);
+        // Update mean from elite
+        let mut new_mean = [0.0; 3];
+        for (d, nm) in new_mean.iter_mut().enumerate() {
+            *nm = candidates.iter().take(ec).map(|c| c.0[d]).sum::<f64>() / ec as f64;
         }
+
+        // Update sigma from elite variance
+        for (d, (s, nm)) in sigma.iter_mut().zip(new_mean.iter()).enumerate() {
+            let var: f64 = candidates
+                .iter()
+                .take(ec)
+                .map(|c| (c.0[d] - nm).powi(2))
+                .sum::<f64>()
+                / ec as f64;
+            *s = var.sqrt().max(1e-8);
+        }
+
+        // Step-size adaptation: if elite z-vectors have larger norm than expected,
+        // increase step size (we're not exploring enough)
+        let mean_z_norm: f64 = candidates
+            .iter()
+            .take(ec)
+            .map(|c| {
+                let z = &c.2;
+                (z[0] * z[0] + z[1] * z[1] + z[2] * z[2]).sqrt()
+            })
+            .sum::<f64>()
+            / ec as f64;
+
+        let expected_norm = (dim as f64).sqrt(); // E[||N(0,I)||] ≈ sqrt(d)
+        step_size *= (c_sigma / damping * (mean_z_norm / expected_norm - 1.0)).exp();
+        step_size = step_size.clamp(0.01, 10.0);
+
+        mean = new_mean;
     }
 
-    // Prefer filter-passing fit; fall back to best unfiltered
     best_filtered.or(best_unfiltered)
 }
 

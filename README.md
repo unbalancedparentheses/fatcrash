@@ -172,8 +172,13 @@ Groups methods into 4 independent categories. When 3+ categories agree, probabil
 
 ## Development
 
+Requires [Nix](https://nixos.org/) with flakes enabled.
+
 ```bash
-# Setup
+# Enter dev shell (Rust, Python 3.13, maturin, uv)
+nix develop
+
+# Install Python deps and build Rust extension
 make setup
 
 # Build (compiles Rust, installs Python package)
@@ -194,6 +199,8 @@ fatcrash serve --port 8000
 # Full analysis
 python analysis/accuracy_report.py
 ```
+
+If you use [direnv](https://direnv.net/), `cd` into the project and run `direnv allow` — the shell activates automatically.
 
 ## Architecture
 

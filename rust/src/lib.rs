@@ -14,6 +14,8 @@ fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(tail::hill::hill_rolling, m)?)?;
     m.add_function(wrap_pyfunction!(tail::kappa::kappa_metric, m)?)?;
     m.add_function(wrap_pyfunction!(tail::kappa::kappa_rolling, m)?)?;
+    m.add_function(wrap_pyfunction!(tail::kappa::taleb_kappa, m)?)?;
+    m.add_function(wrap_pyfunction!(tail::kappa::taleb_kappa_rolling, m)?)?;
     m.add_function(wrap_pyfunction!(tail::pickands::pickands_estimator, m)?)?;
     m.add_function(wrap_pyfunction!(tail::pickands::pickands_rolling, m)?)?;
     m.add_function(wrap_pyfunction!(tail::hurst::hurst_exponent, m)?)?;

@@ -34,6 +34,21 @@ def kappa_rolling(
     n_sims: int | None = 200,
 ) -> tuple[npt.NDArray[np.float64], float]: ...
 
+def taleb_kappa(
+    data: npt.NDArray[np.float64],
+    n0: int | None = 30,
+    n1: int | None = 100,
+    n_sims: int | None = 500,
+) -> tuple[float, float]: ...
+
+def taleb_kappa_rolling(
+    data: npt.NDArray[np.float64],
+    window: int,
+    n0: int | None = 30,
+    n1: int | None = 100,
+    n_sims: int | None = 100,
+) -> tuple[npt.NDArray[np.float64], float]: ...
+
 def pickands_estimator(
     data: npt.NDArray[np.float64],
     k: int | None = None,

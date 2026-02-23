@@ -41,8 +41,7 @@ detect:
 backtest:
 	fatcrash backtest --asset BTC --start 2017-01-01 --end 2018-06-01
 
-# Setup: create venv and install everything
+# Setup: install deps and build (assumes nix dev shell)
 setup:
-	python3 -m venv .venv
-	. .venv/bin/activate && pip install maturin numpy pandas scipy httpx pyarrow pytest rich typer plotly matplotlib
-	. .venv/bin/activate && maturin develop --release
+	uv pip install numpy pandas scipy httpx pyarrow pytest rich typer plotly matplotlib polars ccxt requests fastapi uvicorn
+	maturin develop --release

@@ -16,6 +16,8 @@ from fatcrash._core import (
     kappa_rolling,
     pickands_estimator,
     pickands_rolling,
+    taleb_kappa,
+    taleb_kappa_rolling,
 )
 
 
@@ -27,9 +29,18 @@ class TailEstimate:
 
 @dataclass
 class KappaEstimate:
+    """Max-stability kappa: subsample-max ratio vs Gaussian benchmark."""
     kappa: float
     gaussian_benchmark: float
     is_fat_tail: bool  # kappa < benchmark
+
+
+@dataclass
+class TalebKappaEstimate:
+    """Taleb's kappa: MAD convergence rate. 0 = Gaussian, 1 = Cauchy."""
+    kappa: float
+    gaussian_benchmark: float
+    is_fat_tail: bool  # kappa > benchmark
 
 
 @dataclass
@@ -80,8 +91,36 @@ def rolling_kappa(
     window: int = 252,
     n_subsamples: int = 10,
 ) -> tuple[npt.NDArray[np.float64], float]:
-    """Rolling kappa metric. Returns (kappa_series, gaussian_benchmark)."""
+    """Rolling max-stability kappa. Returns (kappa_series, gaussian_benchmark)."""
     kappa_arr, benchmark = kappa_rolling(returns, window, n_subsamples=n_subsamples)
+    return np.asarray(kappa_arr), benchmark
+
+
+def estimate_taleb_kappa(
+    returns: npt.NDArray[np.float64],
+    n0: int = 30,
+    n1: int = 100,
+) -> TalebKappaEstimate:
+    """Estimate Taleb's kappa: MAD convergence rate.
+
+    kappa = 0 → Gaussian, kappa → 1 → Cauchy.
+    """
+    kappa, benchmark = taleb_kappa(returns, n0=n0, n1=n1)
+    return TalebKappaEstimate(
+        kappa=kappa,
+        gaussian_benchmark=benchmark,
+        is_fat_tail=kappa > benchmark,
+    )
+
+
+def rolling_taleb_kappa(
+    returns: npt.NDArray[np.float64],
+    window: int = 252,
+    n0: int = 30,
+    n1: int = 100,
+) -> tuple[npt.NDArray[np.float64], float]:
+    """Rolling Taleb kappa. Returns (kappa_series, gaussian_benchmark)."""
+    kappa_arr, benchmark = taleb_kappa_rolling(returns, window, n0=n0, n1=n1)
     return np.asarray(kappa_arr), benchmark
 
 

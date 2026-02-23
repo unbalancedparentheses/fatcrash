@@ -35,7 +35,8 @@ DEFAULT_WEIGHTS = {
     "gsadf_bubble": 0.15,
     # Tail estimators
     "gpd_var_exceedance": 0.10,
-    "kappa_regime": 0.10,
+    "kappa_regime": 0.08,
+    "taleb_kappa": 0.07,
     "hill_thinning": 0.05,
     "pickands_thinning": 0.05,
     # Regime
@@ -78,7 +79,7 @@ def aggregate_signals(
     # Count how many independent method categories have elevated signals
     categories = {
         "bubble": ["lppls_confidence", "gsadf_bubble", "deep_lppls"],
-        "tail": ["kappa_regime", "hill_thinning", "pickands_thinning", "gpd_var_exceedance"],
+        "tail": ["kappa_regime", "taleb_kappa", "hill_thinning", "pickands_thinning", "gpd_var_exceedance"],
         "regime": ["hurst_trending"],
         "structure": ["multiscale", "lppls_tc_proximity"],
     }
@@ -140,6 +141,21 @@ def kappa_regime_signal(kappa: float, benchmark: float) -> float:
         return 0.0
     ratio = kappa / benchmark
     return np.clip(1.0 - ratio, 0.0, 1.0)
+
+
+def taleb_kappa_signal(kappa: float, benchmark: float) -> float:
+    """Signal from Taleb kappa exceeding Gaussian benchmark.
+
+    Higher kappa = fatter tails = higher signal.
+    """
+    if np.isnan(kappa) or np.isnan(benchmark):
+        return 0.0
+    # kappa above benchmark means fatter than Gaussian
+    excess = kappa - benchmark
+    if excess <= 0:
+        return 0.0
+    # Scale: 0.3 excess → full signal
+    return np.clip(excess / 0.3, 0.0, 1.0)
 
 
 def hill_thinning_signal(alpha: float, alpha_prev: float) -> float:

@@ -1,6 +1,8 @@
 use numpy::{PyArray1, PyReadonlyArray1};
 use pyo3::prelude::*;
 
+use crate::utils::ols_slope;
+
 /// Detrended Fluctuation Analysis (DFA).
 ///
 /// Alternative to Hurst R/S that handles non-stationarity better.
@@ -8,9 +10,9 @@ use pyo3::prelude::*;
 /// compute RMS of residuals, regress log(RMS) vs log(window_size).
 ///
 /// Returns alpha exponent:
-///   0.5 = white noise (uncorrelated)
-///   > 0.5 = persistent (long memory)
-///   < 0.5 = anti-persistent
+/// - 0.5 = white noise (uncorrelated)
+/// - above 0.5 = persistent (long memory)
+/// - below 0.5 = anti-persistent
 fn compute_dfa(data: &[f64]) -> f64 {
     let n = data.len();
     if n < 32 {
@@ -105,22 +107,6 @@ fn compute_dfa(data: &[f64]) -> f64 {
     ols_slope(&log_s, &log_f)
 }
 
-/// Simple OLS slope: beta = cov(x,y) / var(x)
-fn ols_slope(x: &[f64], y: &[f64]) -> f64 {
-    let n = x.len() as f64;
-    let x_mean = x.iter().sum::<f64>() / n;
-    let y_mean = y.iter().sum::<f64>() / n;
-
-    let cov: f64 = x.iter().zip(y.iter()).map(|(xi, yi)| (xi - x_mean) * (yi - y_mean)).sum();
-    let var_x: f64 = x.iter().map(|xi| (xi - x_mean).powi(2)).sum();
-
-    if var_x < 1e-15 {
-        return f64::NAN;
-    }
-
-    cov / var_x
-}
-
 /// Compute DFA exponent for the given data.
 /// Returns alpha: 0.5 = white noise, >0.5 persistent, <0.5 anti-persistent.
 #[pyfunction]
@@ -166,7 +152,9 @@ mod tests {
 
         let mut rng = StdRng::seed_from_u64(42);
         let n = 4096;
-        let data: Vec<f64> = (0..n).map(|_| rng.sample::<f64, _>(StandardNormal)).collect();
+        let data: Vec<f64> = (0..n)
+            .map(|_| rng.sample::<f64, _>(StandardNormal))
+            .collect();
 
         let alpha = compute_dfa(&data);
         assert!(
@@ -188,7 +176,9 @@ mod tests {
 
         let mut rng = StdRng::seed_from_u64(99);
         let n = 4096;
-        let increments: Vec<f64> = (0..n).map(|_| rng.sample::<f64, _>(StandardNormal)).collect();
+        let increments: Vec<f64> = (0..n)
+            .map(|_| rng.sample::<f64, _>(StandardNormal))
+            .collect();
         // Cumulative sum → persistent / trending series
         let cumulative: Vec<f64> = increments
             .iter()

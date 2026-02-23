@@ -186,6 +186,9 @@ mod tests {
         let mut sorted = data;
         sorted.sort_by(|a, b| b.partial_cmp(a).unwrap());
         let result = pickands_estimate(&sorted, 1);
-        assert!(result.is_nan(), "Should be NaN with only 3 data points and k=1 (need 4k=4)");
+        assert!(
+            result.is_nan(),
+            "Should be NaN with only 3 data points and k=1 (need 4k=4)"
+        );
     }
 }

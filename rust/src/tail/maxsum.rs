@@ -79,7 +79,9 @@ mod tests {
 
         let mut rng = StdRng::seed_from_u64(42);
         let n = 10000;
-        let data: Vec<f64> = (0..n).map(|_| rng.sample::<f64, _>(StandardNormal)).collect();
+        let data: Vec<f64> = (0..n)
+            .map(|_| rng.sample::<f64, _>(StandardNormal))
+            .collect();
 
         let r = compute_maxsum(&data);
         assert!(r.is_finite(), "R_n should be finite, got {}", r);
@@ -101,11 +103,16 @@ mod tests {
         let data: Vec<f64> = (0..n).map(|_| rng.gen::<f64>()).collect();
 
         // Generate Cauchy via tan transform
-        let cauchy: Vec<f64> = data.iter().map(|&u| (std::f64::consts::PI * (u - 0.5)).tan()).collect();
+        let cauchy: Vec<f64> = data
+            .iter()
+            .map(|&u| (std::f64::consts::PI * (u - 0.5)).tan())
+            .collect();
         let gauss: Vec<f64> = {
             use rand_distr::StandardNormal;
             let mut rng2 = StdRng::seed_from_u64(42);
-            (0..n).map(|_| rng2.sample::<f64, _>(StandardNormal)).collect()
+            (0..n)
+                .map(|_| rng2.sample::<f64, _>(StandardNormal))
+                .collect()
         };
 
         let r_cauchy = compute_maxsum(&cauchy);

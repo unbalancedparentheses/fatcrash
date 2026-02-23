@@ -200,9 +200,7 @@ pub fn gsadf_rolling<'py>(
     let n = data_slice.len();
 
     let min_win = min_window
-        .unwrap_or_else(|| {
-            (0.01 * window as f64 + 1.8 * (window as f64).sqrt()).floor() as usize
-        })
+        .unwrap_or_else(|| (0.01 * window as f64 + 1.8 * (window as f64).sqrt()).floor() as usize)
         .max(4);
 
     if window > n || window < min_win + 1 {

@@ -1,6 +1,8 @@
 use numpy::{PyArray1, PyReadonlyArray1};
 use pyo3::prelude::*;
 
+use crate::utils::ols_slope;
+
 /// Hurst exponent via rescaled range (R/S) analysis.
 ///
 /// H > 0.5: trending / persistent (long memory)
@@ -93,22 +95,6 @@ fn compute_hurst(data: &[f64]) -> f64 {
     ols_slope(&log_n, &log_rs)
 }
 
-/// Simple OLS slope: beta = cov(x,y) / var(x)
-fn ols_slope(x: &[f64], y: &[f64]) -> f64 {
-    let n = x.len() as f64;
-    let x_mean = x.iter().sum::<f64>() / n;
-    let y_mean = y.iter().sum::<f64>() / n;
-
-    let cov: f64 = x.iter().zip(y.iter()).map(|(xi, yi)| (xi - x_mean) * (yi - y_mean)).sum();
-    let var_x: f64 = x.iter().map(|xi| (xi - x_mean).powi(2)).sum();
-
-    if var_x < 1e-15 {
-        return f64::NAN;
-    }
-
-    cov / var_x
-}
-
 /// Compute Hurst exponent for the given data via R/S analysis.
 /// Returns H in [0, 1] approximately.
 #[pyfunction]
@@ -156,15 +142,13 @@ mod tests {
 
         let mut rng = StdRng::seed_from_u64(42);
         let n = 8192;
-        let increments: Vec<f64> = (0..n).map(|_| rng.sample::<f64, _>(StandardNormal)).collect();
+        let increments: Vec<f64> = (0..n)
+            .map(|_| rng.sample::<f64, _>(StandardNormal))
+            .collect();
 
         let h = compute_hurst(&increments);
 
-        assert!(
-            h.is_finite(),
-            "Hurst exponent should be finite, got {}",
-            h
-        );
+        assert!(h.is_finite(), "Hurst exponent should be finite, got {}", h);
         assert!(
             (h - 0.5).abs() < 0.15,
             "Hurst exponent for iid Gaussian should be near 0.5, got {}",
@@ -183,7 +167,9 @@ mod tests {
         let n = 8192;
 
         // Generate fractional-like trending series by cumulating
-        let increments: Vec<f64> = (0..n).map(|_| rng.sample::<f64, _>(StandardNormal)).collect();
+        let increments: Vec<f64> = (0..n)
+            .map(|_| rng.sample::<f64, _>(StandardNormal))
+            .collect();
         let cumulative: Vec<f64> = increments
             .iter()
             .scan(0.0, |acc, &x| {
@@ -194,11 +180,7 @@ mod tests {
 
         let h = compute_hurst(&cumulative);
 
-        assert!(
-            h.is_finite(),
-            "Hurst exponent should be finite, got {}",
-            h
-        );
+        assert!(h.is_finite(), "Hurst exponent should be finite, got {}", h);
         // Cumulative sum of iid should give H > 0.5 (more persistent)
         assert!(
             h > 0.5,

@@ -36,11 +36,7 @@ pub fn multiscale_signals<'py>(
 
             // Agreement = geometric mean of signals across scales
             // Penalize disagreement (one high, others low)
-            let signals = [
-                v1.clamp(0.0, 1.0),
-                v3.clamp(0.0, 1.0),
-                v7.clamp(0.0, 1.0),
-            ];
+            let signals = [v1.clamp(0.0, 1.0), v3.clamp(0.0, 1.0), v7.clamp(0.0, 1.0)];
             let mean = (signals[0] * signals[1] * signals[2]).cbrt();
             agreement[i] = mean;
         }

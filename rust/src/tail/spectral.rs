@@ -1,6 +1,8 @@
 use numpy::{PyArray1, PyReadonlyArray1};
 use pyo3::prelude::*;
 
+use crate::utils::ols_slope;
+
 /// Spectral exponent estimator via GPH (Geweke-Porter-Hudak) log-periodogram regression.
 ///
 /// Estimates the long-memory parameter d from the spectral density near frequency zero:
@@ -76,22 +78,6 @@ fn compute_spectral(data: &[f64], bandwidth_exp: f64) -> f64 {
     -slope
 }
 
-/// Simple OLS slope: beta = cov(x,y) / var(x)
-fn ols_slope(x: &[f64], y: &[f64]) -> f64 {
-    let n = x.len() as f64;
-    let x_mean = x.iter().sum::<f64>() / n;
-    let y_mean = y.iter().sum::<f64>() / n;
-
-    let cov: f64 = x.iter().zip(y.iter()).map(|(xi, yi)| (xi - x_mean) * (yi - y_mean)).sum();
-    let var_x: f64 = x.iter().map(|xi| (xi - x_mean).powi(2)).sum();
-
-    if var_x < 1e-15 {
-        return f64::NAN;
-    }
-
-    cov / var_x
-}
-
 /// Compute spectral exponent (long-memory parameter d) via GPH estimator.
 /// d > 0: long memory, d = 0: short memory, d < 0: anti-persistent.
 /// Relationship to Hurst: d = H - 0.5.
@@ -146,7 +132,9 @@ mod tests {
 
         let mut rng = StdRng::seed_from_u64(42);
         let n = 4096;
-        let data: Vec<f64> = (0..n).map(|_| rng.sample::<f64, _>(StandardNormal)).collect();
+        let data: Vec<f64> = (0..n)
+            .map(|_| rng.sample::<f64, _>(StandardNormal))
+            .collect();
 
         let d = compute_spectral(&data, 0.65);
 
@@ -166,7 +154,9 @@ mod tests {
 
         let mut rng = StdRng::seed_from_u64(99);
         let n = 4096;
-        let increments: Vec<f64> = (0..n).map(|_| rng.sample::<f64, _>(StandardNormal)).collect();
+        let increments: Vec<f64> = (0..n)
+            .map(|_| rng.sample::<f64, _>(StandardNormal))
+            .collect();
         let cumulative: Vec<f64> = increments
             .iter()
             .scan(0.0, |acc, &x| {

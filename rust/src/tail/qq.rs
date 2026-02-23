@@ -1,6 +1,8 @@
 use numpy::{PyArray1, PyReadonlyArray1};
 use pyo3::prelude::*;
 
+use crate::utils::ols_slope;
+
 /// QQ estimator for the tail index.
 ///
 /// Estimates tail index from slope of log-log QQ plot against exponential quantiles.
@@ -21,8 +23,7 @@ fn qq_estimate(sorted_desc: &[f64], k: usize) -> f64 {
     let mut log_x: Vec<f64> = Vec::with_capacity(k);
     let mut exp_quantile: Vec<f64> = Vec::with_capacity(k);
 
-    for i in 0..k {
-        let x = sorted_desc[i];
+    for (i, &x) in sorted_desc.iter().enumerate().take(k) {
         if x <= 0.0 {
             continue;
         }
@@ -49,22 +50,6 @@ fn qq_estimate(sorted_desc: &[f64], k: usize) -> f64 {
     }
 
     1.0 / slope
-}
-
-/// Simple OLS slope: beta = cov(x,y) / var(x)
-fn ols_slope(x: &[f64], y: &[f64]) -> f64 {
-    let n = x.len() as f64;
-    let x_mean = x.iter().sum::<f64>() / n;
-    let y_mean = y.iter().sum::<f64>() / n;
-
-    let cov: f64 = x.iter().zip(y.iter()).map(|(xi, yi)| (xi - x_mean) * (yi - y_mean)).sum();
-    let var_x: f64 = x.iter().map(|xi| (xi - x_mean).powi(2)).sum();
-
-    if var_x < 1e-15 {
-        return f64::NAN;
-    }
-
-    cov / var_x
 }
 
 /// Compute QQ tail index estimator for a given array of data.

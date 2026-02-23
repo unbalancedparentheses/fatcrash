@@ -1,6 +1,26 @@
 use numpy::{PyArray1, PyReadonlyArray1};
 use pyo3::prelude::*;
 
+/// Simple OLS slope: beta = cov(x,y) / var(x)
+pub(crate) fn ols_slope(x: &[f64], y: &[f64]) -> f64 {
+    let n = x.len() as f64;
+    let x_mean = x.iter().sum::<f64>() / n;
+    let y_mean = y.iter().sum::<f64>() / n;
+
+    let cov: f64 = x
+        .iter()
+        .zip(y.iter())
+        .map(|(xi, yi)| (xi - x_mean) * (yi - y_mean))
+        .sum();
+    let var_x: f64 = x.iter().map(|xi| (xi - x_mean).powi(2)).sum();
+
+    if var_x < 1e-15 {
+        return f64::NAN;
+    }
+
+    cov / var_x
+}
+
 #[pyfunction]
 pub fn log_returns<'py>(
     py: Python<'py>,

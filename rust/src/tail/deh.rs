@@ -26,8 +26,8 @@ fn deh_estimate(sorted_desc: &[f64], k: usize) -> f64 {
     let mut m1 = 0.0;
     let mut m2 = 0.0;
 
-    for i in 0..k {
-        let log_spacing = (sorted_desc[i] / x_kp1).ln();
+    for &x in sorted_desc.iter().take(k) {
+        let log_spacing = (x / x_kp1).ln();
         m1 += log_spacing;
         m2 += log_spacing * log_spacing;
     }

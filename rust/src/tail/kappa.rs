@@ -302,7 +302,11 @@ mod tests {
             .map(|_| {
                 let a: f64 = rng.sample(StandardNormal);
                 let b: f64 = rng.sample(StandardNormal);
-                if b.abs() < 1e-10 { a } else { a / b }
+                if b.abs() < 1e-10 {
+                    a
+                } else {
+                    a / b
+                }
             })
             .collect();
 

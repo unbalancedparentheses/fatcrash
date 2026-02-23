@@ -256,4 +256,3 @@ mod tests {
         assert!(es >= var, "ES should >= VaR: {} vs {}", es, var);
     }
 }
-

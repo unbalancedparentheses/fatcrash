@@ -199,9 +199,9 @@ def main():
     print("=" * 70)
     print(
         f"\n{'Decade':<8} {'N days':<8} {'Hill a':<8} {'Kappa':<8} "
-        f"{'K/bench':<8} {'VaR95%':<10} {'Worst day':<10}"
+        f"{'K/bench':<8} {'T-Kappa':<8} {'T-bench':<8} {'VaR95%':<10} {'Worst day':<10}"
     )
-    print("-" * 70)
+    print("-" * 85)
 
     decades = [
         ("1970s", "1971-01-01", "1979-12-31"),
@@ -219,6 +219,7 @@ def main():
         ret = log_returns(sub)
         alpha = hill_estimator(ret)
         k, bench = kappa_metric(ret, n_subsamples=10, n_sims=100)
+        tk, tb = taleb_kappa(ret, n0=30, n1=100, n_sims=100)
         try:
             var, _ = gpd_var_es(ret, p=0.95, quantile=0.90)
         except Exception:
@@ -226,7 +227,7 @@ def main():
         worst = ret.min()
         print(
             f"{name:<8} {len(ret):<8} {alpha:<8.2f} {k:<8.3f} "
-            f"{k / bench:<8.2f} {var:<10.4f} {worst:<10.4f}"
+            f"{k / bench:<8.2f} {tk:<8.4f} {tb:<8.4f} {var:<10.4f} {worst:<10.4f}"
         )
 
     # ══════════════════════════════════════════════
@@ -297,9 +298,11 @@ def main():
             alpha = hill_estimator(yearly_ret)
             k, bench = kappa_metric(yearly_ret, n_subsamples=5, n_sims=100)
             ratio = k / bench if bench > 0 else 1.0
+            tk, tb = taleb_kappa(yearly_ret, n0=10, n1=30, n_sims=100)
             print(
                 f"  {currency:<20} {len(yearly_ret)} years  "
                 f"Hill a={alpha:.2f}  K/bench={ratio:.2f}  "
+                f"T-kappa={tk:.3f} (bench={tb:.3f})  "
                 f"{'FAT TAILS' if alpha < 4 and ratio < 1 else 'moderate'}"
             )
     except FileNotFoundError:
@@ -322,9 +325,9 @@ def main():
 
     print(
         f"\n  {'Pair':<14} {'N':<7} {'Pickands':<10} {'Hurst':<8} "
-        f"{'GSADF':<10} {'CV95':<8} {'Bubble?':<9} {'Hill':<8} {'Verdict'}"
+        f"{'T-Kappa':<9} {'GSADF':<10} {'CV95':<8} {'Bubble?':<9} {'Hill':<8} {'Verdict'}"
     )
-    print("  " + "-" * 95)
+    print("  " + "-" * 105)
 
     fred_results = []
     for fname in fred_pairs:
@@ -352,6 +355,7 @@ def main():
         xi = pickands_estimator(ret)
         h = hurst_exponent(ret)
         alpha = hill_estimator(ret)
+        tk, tb = taleb_kappa(ret, n0=30, n1=100, n_sims=100)
 
         # Subsample for GSADF (O(n^2) — use last 2000 points max)
         gsadf_prices = prices[-2000:] if len(prices) > 2000 else prices
@@ -362,7 +366,7 @@ def main():
 
         fred_results.append({
             "pair": pair_label, "n": len(ret), "pickands": xi,
-            "hurst": h, "gsadf": gsadf_stat, "cv95": cv95,
+            "hurst": h, "taleb_kappa": tk, "gsadf": gsadf_stat, "cv95": cv95,
             "bubble": bubble, "hill": alpha,
         })
 
@@ -379,7 +383,7 @@ def main():
 
         print(
             f"  {pair_label:<14} {len(ret):<7} {xi:<10.4f} {h:<8.4f} "
-            f"{gsadf_stat:<10.4f} {cv95:<8.4f} {'YES' if bubble else 'no':<9} "
+            f"{tk:<9.4f} {gsadf_stat:<10.4f} {cv95:<8.4f} {'YES' if bubble else 'no':<9} "
             f"{alpha:<8.2f} {verdict}"
         )
 
@@ -400,9 +404,9 @@ def main():
 
         print(
             f"\n  {'Country':<22} {'Years':<7} {'Pickands':<10} {'Hurst':<8} "
-            f"{'Hill':<8} {'Verdict'}"
+            f"{'T-Kappa':<9} {'Hill':<8} {'Verdict'}"
         )
-        print("  " + "-" * 75)
+        print("  " + "-" * 85)
 
         for country in top30:
             series = clio[["year", country]].dropna()
@@ -420,10 +424,11 @@ def main():
             xi = pickands_estimator(yearly_ret)
             h = hurst_exponent(yearly_ret)
             alpha = hill_estimator(yearly_ret)
+            tk, tb = taleb_kappa(yearly_ret, n0=5, n1=15, n_sims=100)
 
             clio_results.append({
                 "country": country, "n": len(yearly_ret),
-                "pickands": xi, "hurst": h, "hill": alpha,
+                "pickands": xi, "hurst": h, "taleb_kappa": tk, "hill": alpha,
             })
 
             verdict_parts = []
@@ -441,7 +446,7 @@ def main():
 
             print(
                 f"  {country:<22} {len(yearly_ret):<7} {xi:<10.4f} {h:<8.4f} "
-                f"{alpha:<8.2f} {verdict}"
+                f"{tk:<9.4f} {alpha:<8.2f} {verdict}"
             )
     except FileNotFoundError:
         print("  (Clio Infra data not available)")
@@ -461,9 +466,12 @@ def main():
         print(f"    Hurst > 0.55 (strong pers.):  {(fred_df['hurst'] > 0.55).sum()}/{len(fred_df)}")
         print(f"    GSADF bubble detected:        {(fred_df['bubble']).sum()}/{len(fred_df)}")
         print(f"    Hill alpha < 4 (fat tails):   {(fred_df['hill'] < 4).sum()}/{len(fred_df)}")
+        tk_valid = fred_df['taleb_kappa'].dropna()
+        print(f"    Taleb kappa > 0.1 (fat):      {(tk_valid > 0.1).sum()}/{len(tk_valid)}")
         print(f"    Mean Pickands xi:             {fred_df['pickands'].mean():.4f}")
         print(f"    Mean Hurst H:                 {fred_df['hurst'].mean():.4f}")
         print(f"    Mean Hill alpha:              {fred_df['hill'].mean():.2f}")
+        print(f"    Mean Taleb kappa:             {tk_valid.mean():.4f}")
 
     if clio_results:
         clio_df = pd.DataFrame(clio_results)
@@ -473,9 +481,12 @@ def main():
         print(f"    Hurst > 0.55 (strong pers.):  {(clio_df['hurst'] > 0.55).sum()}/{len(clio_df)}")
         print(f"    Hill alpha < 2 (extreme):     {(clio_df['hill'] < 2).sum()}/{len(clio_df)}")
         print(f"    Hill alpha < 4 (fat tails):   {(clio_df['hill'] < 4).sum()}/{len(clio_df)}")
+        ctk_valid = clio_df['taleb_kappa'].dropna()
+        print(f"    Taleb kappa > 0.1 (fat):      {(ctk_valid > 0.1).sum()}/{len(ctk_valid)}")
         print(f"    Mean Pickands xi:             {clio_df['pickands'].mean():.4f}")
         print(f"    Mean Hurst H:                 {clio_df['hurst'].mean():.4f}")
         print(f"    Mean Hill alpha:              {clio_df['hill'].mean():.2f}")
+        print(f"    Mean Taleb kappa:             {ctk_valid.mean():.4f}")
 
     print("\n  Method agreement:")
     print("    Pickands xi > 0 confirms Hill alpha < 4: both detect heavy tails")
@@ -493,38 +504,44 @@ def main():
     print("=" * 70)
     print(
         """
-  1. LPPLS is the best single method (97%) -- detects the bubble regime,
+  1. LPPLS is the best single method (100%) -- detects the bubble regime,
      not just tail statistics. Works for both small and large crashes.
 
-  2. Kappa is the best tail-based method (49%) -- more robust than Hill
-     alone because it benchmarks against Gaussian via Monte Carlo.
+  2. Hurst exponent is the best non-bubble method (59%) -- persistent
+     dynamics (H > 0.55) reliably precede crashes across all asset classes.
 
-  3. Hill alpha alone is unreliable (28%) -- too noisy for standalone use,
-     but valuable in the aggregate as a trend indicator.
+  3. Max-stability kappa and Pickands tie at 49% -- both outperform Hill
+     (28%) as standalone tail detectors.
 
-  4. Fat tails are universal across all timescales:
+  4. Taleb kappa scores 33% overall but 50% on major crashes -- the MAD
+     convergence rate is most sensitive to large regime shifts where the
+     tail structure genuinely deteriorates, less useful for small drawdowns.
+
+  5. GSADF at 38% is better for medium/major crashes (59%/38%) than small
+     ones (14%) -- explosive unit root tests need sustained price growth.
+
+  6. Hill alpha alone is unreliable (28%) -- too noisy for standalone use,
+     but valuable in the aggregate as a directional indicator.
+
+  7. Fat tails are universal across all timescales:
      - Daily returns (BTC, SPY, Gold, GBP/USD): alpha 2-4
      - Decade-by-decade forex: every decade shows fat tails
      - Century-scale exchange rates: every currency shows fat tails
      - Argentina/Germany/France (alpha < 1): hyperinflation makes
        tails so fat that variance is literally infinite
 
-  5. All 6 known GBP/USD crises detected (100%): IMF 1976, Plaza 1985,
+  8. All 6 known GBP/USD crises detected (100%): IMF 1976, Plaza 1985,
      Black Wednesday 1992, 2008 crisis, Brexit 2016, Truss 2022.
 
-  6. The multi-method approach works: combining LPPLS (bubble structure)
-     with tail metrics (kappa, Hill, EVT) catches different types of
-     crashes -- bubbles, exogenous shocks, and regime changes.
+  9. The 8-method approach works: combining LPPLS (bubble structure)
+     with tail metrics (kappa, Taleb kappa, Hill, Pickands, EVT),
+     regime detection (Hurst), and explosive tests (GSADF) catches
+     different types of crashes -- bubbles, exogenous shocks, and
+     regime changes.
 
-  7. Pickands, Hurst, and GSADF on forex-centuries data:
-     - Pickands xi confirms heavy tails across all daily forex pairs
-       and century-scale yearly exchange rates.
-     - Hurst exponent reveals persistent dynamics (H > 0.5) in most
-       forex pairs, consistent with carry trade and momentum effects.
-     - GSADF detects explosive bubble episodes in price levels,
-       adding a dynamic dimension to the static tail estimators.
-     - All three methods agree with Hill/Kappa: fat tails are
-       ubiquitous in foreign exchange markets at every timescale.
+  10. All methods converge on forex-centuries data: Pickands, Hurst,
+      GSADF, Hill, Taleb kappa, and max-stability kappa all confirm
+      fat tails are ubiquitous in foreign exchange at every timescale.
 """
     )
 

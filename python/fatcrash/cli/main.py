@@ -76,7 +76,7 @@ def detect(
 
     # Tail analysis
     try:
-        from fatcrash.indicators.tail_indicator import estimate_tail_index, estimate_kappa
+        from fatcrash.indicators.tail_indicator import estimate_tail_index, estimate_kappa, estimate_taleb_kappa
 
         tail = estimate_tail_index(returns)
         table.add_row(
@@ -88,10 +88,18 @@ def detect(
 
         kappa = estimate_kappa(returns)
         table.add_row(
-            "Kappa",
+            "Max-Stab Kappa",
             f"{kappa.kappa:.3f}",
             f"vs {kappa.gaussian_benchmark:.3f}",
             "[red]!!![/]" if kappa.is_fat_tail else "[green]OK[/]",
+        )
+
+        tk = estimate_taleb_kappa(returns)
+        table.add_row(
+            "Taleb Kappa",
+            f"{tk.kappa:.3f}",
+            f"vs {tk.gaussian_benchmark:.3f}",
+            "[red]!!![/]" if tk.is_fat_tail else "[green]OK[/]",
         )
     except Exception as e:
         table.add_row("Tail", "error", str(e), "[red]ERR[/]")
@@ -135,12 +143,13 @@ def backtest(
     """Run historical backtest against known crash periods."""
     import numpy as np
     from fatcrash.data import transforms
-    from fatcrash.indicators.tail_indicator import rolling_tail_index, rolling_kappa
+    from fatcrash.indicators.tail_indicator import rolling_tail_index, rolling_kappa, rolling_taleb_kappa
     from fatcrash.indicators.evt_indicator import rolling_var_es
     from fatcrash.aggregator.signals import (
         aggregate_signals,
         hill_thinning_signal,
         kappa_regime_signal,
+        taleb_kappa_signal,
         var_exceedance_signal,
     )
 
@@ -155,8 +164,11 @@ def backtest(
     console.print("Computing rolling Hill estimator...")
     hill_alpha = rolling_tail_index(returns, window=window)
 
-    console.print("Computing rolling kappa...")
+    console.print("Computing rolling max-stability kappa...")
     kappa_arr, kappa_bench = rolling_kappa(returns, window=window)
+
+    console.print("Computing rolling Taleb kappa...")
+    tk_arr, tk_bench = rolling_taleb_kappa(returns, window=window)
 
     console.print("Computing rolling VaR/ES...")
     var_arr, es_arr = rolling_var_es(returns, window=window)
@@ -174,6 +186,9 @@ def backtest(
 
         if not np.isnan(kappa_arr[i]):
             components["kappa_regime"] = kappa_regime_signal(kappa_arr[i], kappa_bench)
+
+        if not np.isnan(tk_arr[i]):
+            components["taleb_kappa"] = taleb_kappa_signal(tk_arr[i], tk_bench)
 
         if not np.isnan(var_arr[i]):
             components["gpd_var_exceedance"] = var_exceedance_signal(returns[i], var_arr[i])

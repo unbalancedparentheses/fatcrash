@@ -169,40 +169,40 @@ When the combined detector signals HIGH or CRITICAL, agreement across independen
 
 ### FRED Daily (12 currency pairs, 1971-2025)
 
-| Pair | Hill alpha | Pickands | Hurst H | GSADF bubble? |
-|------|:---------:|:-------:|:------:|:---:|
-| AUD/USD | 2.58 | 1.02 | 0.56 | YES |
-| GBP/USD | 4.13 | 0.06 | 0.58 | YES |
-| JPY/USD | 3.94 | -0.23 | 0.58 | YES |
-| CAD/USD | 3.84 | 0.30 | 0.57 | YES |
-| CNY/USD | 2.79 | 0.55 | 0.59 | YES |
-| MXN/USD | 2.04 | 0.60 | 0.56 | YES |
-| BRL/USD | 2.80 | 0.44 | 0.56 | YES |
-| KRW/USD | 1.90 | 1.01 | 0.67 | YES |
-| INR/USD | 2.62 | 0.45 | 0.57 | YES |
-| EUR/USD | 4.88 | 0.06 | 0.56 | no |
-| CHF/USD | 3.81 | -0.32 | 0.57 | no |
-| NZD/USD | 2.89 | 0.68 | 0.57 | no |
+| Pair | Hill alpha | Pickands | Hurst H | Taleb kappa | GSADF bubble? |
+|------|:---------:|:-------:|:------:|:------:|:---:|
+| AUD/USD | 2.58 | 1.02 | 0.56 | 0.37 | YES |
+| GBP/USD | 4.13 | 0.06 | 0.58 | 0.00 | YES |
+| JPY/USD | 3.94 | -0.23 | 0.58 | 0.31 | YES |
+| CAD/USD | 3.84 | 0.30 | 0.57 | 0.00 | YES |
+| CNY/USD | 2.79 | 0.55 | 0.59 | 0.77 | YES |
+| MXN/USD | 2.04 | 0.60 | 0.56 | 0.26 | YES |
+| BRL/USD | 2.80 | 0.44 | 0.56 | 0.44 | YES |
+| KRW/USD | 1.90 | 1.01 | 0.67 | 0.28 | YES |
+| INR/USD | 2.62 | 0.45 | 0.57 | 0.38 | YES |
+| EUR/USD | 4.88 | 0.06 | 0.56 | 0.29 | no |
+| CHF/USD | 3.81 | -0.32 | 0.57 | 0.00 | no |
+| NZD/USD | 2.89 | 0.68 | 0.57 | 0.20 | no |
 
-All 12 pairs exhibit Hurst H > 0.55, indicating universal persistence in forex markets. 9/12 show explosive bubble episodes (GSADF). 10/12 have heavy tails (Pickands xi > 0 or Hill alpha < 4).
+All 12 pairs exhibit Hurst H > 0.55 (universal persistence). 9/12 show explosive bubble episodes (GSADF). 9/12 have Taleb kappa > 0.1 (slow CLT convergence). Mean Taleb kappa: 0.27 (Gaussian benchmark ~0.13).
 
 ### Clio Infra Yearly (30 countries, 1500-2013)
 
-| Country | Years | Hill alpha | Hurst H | Verdict |
-|---------|:-----:|:---------:|:------:|---------|
-| Germany | 153 | 0.52 | 0.56 | EXTREME, persistent |
-| Austria | 104 | 0.63 | 0.61 | EXTREME, persistent |
-| Belgium | 114 | 0.89 | 0.64 | EXTREME, persistent |
-| Finland | 100 | 0.94 | 0.58 | EXTREME, persistent |
-| Argentina | 102 | 1.28 | 0.71 | EXTREME, persistent |
-| Mexico | 113 | 1.06 | 0.70 | EXTREME, persistent |
-| Italy | 95 | 0.77 | 0.80 | EXTREME, persistent |
-| Portugal | 88 | 0.98 | 0.85 | EXTREME, persistent |
-| Greece | 87 | 0.77 | 0.76 | EXTREME, persistent |
-| UK | 223 | 2.42 | 0.47 | fat-tail |
-| Canada | 100 | 3.70 | 0.50 | fat-tail |
+| Country | Years | Hill alpha | Hurst H | Taleb kappa | Verdict |
+|---------|:-----:|:---------:|:------:|:------:|---------|
+| Germany | 153 | 0.52 | 0.56 | 1.00 | EXTREME, persistent |
+| Austria | 104 | 0.63 | 0.61 | 1.00 | EXTREME, persistent |
+| Belgium | 114 | 0.89 | 0.64 | 0.86 | EXTREME, persistent |
+| Finland | 100 | 0.94 | 0.58 | 0.43 | EXTREME, persistent |
+| Argentina | 102 | 1.28 | 0.71 | 1.00 | EXTREME, persistent |
+| Mexico | 113 | 1.06 | 0.70 | 0.92 | EXTREME, persistent |
+| Italy | 95 | 0.77 | 0.80 | 0.95 | EXTREME, persistent |
+| Portugal | 88 | 0.98 | 0.85 | 1.00 | EXTREME, persistent |
+| Greece | 87 | 0.77 | 0.76 | 0.81 | EXTREME, persistent |
+| UK | 223 | 2.42 | 0.47 | 0.04 | fat-tail |
+| Canada | 100 | 3.70 | 0.50 | 0.00 | fat-tail |
 
-19/30 countries have alpha < 2 (infinite variance). 25/30 have Hurst > 0.5 (persistent). Only 1/30 has alpha > 4.
+19/30 countries have alpha < 2 (infinite variance). 25/30 have Hurst > 0.5 (persistent). 20/29 have Taleb kappa > 0.1. Mean Taleb kappa across 30 countries: 0.56 (Gaussian = 0).
 
 Italy (H=0.80) and Portugal (H=0.85) exhibit the strongest persistence — their exchange rates trend for years at a time over century-scale data.
 

@@ -38,11 +38,12 @@ def create_app() -> FastAPI:
         """Run crash detection on an asset."""
         import numpy as np
         from fatcrash.data import ingest, transforms
-        from fatcrash.indicators.tail_indicator import estimate_tail_index, estimate_kappa
+        from fatcrash.indicators.tail_indicator import estimate_tail_index, estimate_kappa, estimate_taleb_kappa
         from fatcrash.indicators.evt_indicator import compute_var_es
         from fatcrash.aggregator.signals import (
             aggregate_signals,
             kappa_regime_signal,
+            taleb_kappa_signal,
             var_exceedance_signal,
         )
 
@@ -60,8 +61,10 @@ def create_app() -> FastAPI:
         try:
             tail = estimate_tail_index(returns)
             kappa = estimate_kappa(returns)
+            tk = estimate_taleb_kappa(returns)
             components["hill_thinning"] = max(0, (4.0 - tail.alpha) / 4.0)
             components["kappa_regime"] = kappa_regime_signal(kappa.kappa, kappa.gaussian_benchmark)
+            components["taleb_kappa"] = taleb_kappa_signal(tk.kappa, tk.gaussian_benchmark)
         except Exception:
             pass
 

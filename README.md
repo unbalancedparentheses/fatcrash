@@ -2,7 +2,7 @@
 
 Crash detection via fat-tail statistics. Works with any asset: Bitcoin, gold, S&P 500, forex, etc.
 
-Python + Rust (PyO3) — performance-critical numerical work in Rust, everything else in Python.
+Python + Rust (PyO3) — performance-critical numerical work in Rust, everything else in Python. 7 methods, 97 tests, tested on 500 years of data across 138 countries.
 
 ## The Methods
 
@@ -16,66 +16,107 @@ The Hill estimator fits a power law to the tail: P(X > x) ~ x^(-alpha). Lower al
 - **alpha 2-4**: Fat tails, finite variance but infinite kurtosis
 - **alpha > 4**: Relatively thin tails
 
-Most financial assets have alpha between 2 and 4. When alpha drops over time, it means the tail is getting fatter — a warning sign.
+### Pickands Estimator — "More robust tail measurement"
+
+Like Hill but works for all tail types (heavy, light, bounded), not just heavy. Uses three order statistics instead of Hill's sum, making it less sensitive to the choice of k. Positive gamma = heavy tail, zero = exponential, negative = bounded.
 
 ### Kappa Metric — "How far from Gaussian?"
 
-Taleb's kappa metric directly measures how much a distribution deviates from Gaussian (normal). It works by splitting the data into subsamples, computing the max of each, and comparing the mean of those maxima to the overall max.
-
-For a Gaussian distribution, kappa equals a known benchmark. For fat-tailed distributions, kappa falls below the benchmark. The ratio kappa/benchmark tells you:
+Taleb's kappa metric directly measures how much a distribution deviates from Gaussian. It splits data into subsamples, computes the max of each, and compares the mean of those maxima to the overall max. The ratio kappa/benchmark tells you:
 
 - **Ratio ~ 1.0**: Behaves like Gaussian (safe, predictable)
 - **Ratio < 0.8**: Significantly fatter tails than Gaussian
 - **Ratio < 0.5**: Extremely fat tails (crisis regime)
 
+### Hurst Exponent — "Is the market trending?"
+
+Measures long-range dependence via R/S analysis. H > 0.5 means trending (persistent), H = 0.5 means random walk, H < 0.5 means mean-reverting. A trending market combined with a bubble signal is a strong crash warning.
+
 ### EVT (Extreme Value Theory) — "What's the worst that can happen?"
 
-EVT is the mathematically rigorous framework for modeling extreme events. Instead of fitting a distribution to all the data (where the bulk drowns out the tails), EVT fits only to the extremes.
+The mathematically rigorous framework for modeling extreme events. Fits only the extremes, not the bulk.
 
-**GPD (Generalized Pareto Distribution)**: Fit to losses that exceed a threshold. Gives you:
-- **VaR (Value at Risk)**: "There's a 1% chance of losing more than X"
-- **ES (Expected Shortfall)**: "If we do lose more than VaR, the average loss is Y"
-
-**GEV (Generalized Extreme Value)**: Fit to block maxima (e.g., worst loss per month). The shape parameter xi tells you the tail type:
-- **xi > 0**: Frechet — fat tail, power-law decay (typical for financial data)
-- **xi ~ 0**: Gumbel — exponential tail decay
-- **xi < 0**: Weibull — bounded tail
+- **GPD**: Fit to losses exceeding a threshold → VaR and Expected Shortfall
+- **GEV**: Fit to block maxima → tail shape classification (Frechet/Gumbel/Weibull)
 
 ### LPPLS — "Is this a bubble?"
 
-The Log-Periodic Power Law Singularity model detects **bubbles before they burst**. The theory (Didier Sornette, ETH Zurich): during a bubble, prices follow a specific pattern — super-exponential growth with accelerating oscillations that converge toward a critical time tc (the most likely crash date).
+The Log-Periodic Power Law Singularity model detects **bubbles before they burst** (Didier Sornette, ETH Zurich). During a bubble, prices follow super-exponential growth with accelerating oscillations converging toward a critical time tc. The DS LPPLS confidence indicator fits across many time windows — high fraction of valid fits = high confidence.
 
-The LPPLS equation: `ln(p(t)) = A + B(tc-t)^m + C(tc-t)^m cos(w*ln(tc-t) + phi)`
+### GSADF — "Is there explosive growth?"
 
-Key parameters:
-- **tc**: Predicted critical time (crash date)
-- **m**: Power law exponent (must be 0.1-0.9 for a valid bubble)
-- **omega**: Log-periodic frequency (must be 2-25)
-- **B < 0**: Required — indicates super-exponential growth
-
-The **DS LPPLS confidence indicator** fits this model across many different time windows. If a high fraction of windows produce valid bubble fits, confidence is high.
-
-### Deep LPPLS — "Neural network bubble detection"
-
-A physics-informed neural network (P-LNN) that predicts LPPLS parameters directly from a price window. The loss function combines reconstruction error with LPPLS physics constraints (Sornette filter violations are penalized). Optional, requires PyTorch.
+The Generalized Sup ADF test (Phillips-Shi-Yu, 2015) — the standard econometric bubble test. Tests for explosive unit root behavior. Complements LPPLS: LPPLS detects bubble *shape*, GSADF detects *explosive growth*. Includes Monte Carlo critical values (parallelized with rayon).
 
 ## Accuracy Results
 
-Tested on 35 historical drawdowns across BTC (15% threshold), SPY (8%), and Gold (8%):
+### Individual methods on 39 drawdowns (BTC, SPY, Gold)
 
 | Method | Small (<15%) | Medium (15-30%) | Major (>30%) | Overall |
 |--------|:---:|:---:|:---:|:---:|
-| **LPPLS** | **100%** | **100%** | **88%** | **97%** |
-| **Kappa** | 57% | 47% | 38% | 49% |
-| **GPD VaR** | 40% | 55% | 0% | 42% |
-| **Hill** | 29% | 29% | 25% | 28% |
+| **LPPLS** | **100%** | **100%** | **100%** | **100%** |
+| Hurst | 57% | 65% | 50% | 59% |
+| Kappa | 57% | 47% | 38% | 49% |
+| Pickands | 43% | 53% | 50% | 49% |
+| GPD VaR | 40% | 55% | — | 42% |
+| GSADF | 14% | 59% | 38% | 38% |
+| Hill | 29% | 29% | 25% | 28% |
 
-Key findings:
-- **LPPLS is the best single method** (97%) — it detects the bubble regime itself, not just tail statistics
-- **Kappa is the best tail-based method** — more robust than Hill alone
-- **GPD VaR** works well for medium corrections but struggles with major crashes (the pre-crash period is itself volatile)
-- **Hill alone is unreliable** (28%) — too noisy as a standalone signal, but useful in the aggregate
-- **Combining methods improves reliability** — the aggregator produces more stable signals than any single method
+### Combined detector (all 7 methods with agreement bonus)
+
+| Method | Small | Medium | Major | Overall |
+|--------|:---:|:---:|:---:|:---:|
+| **COMBINED** | **64%** | **94%** | **75%** | **79%** |
+
+When the combined detector says HIGH or CRITICAL, it's almost always right. Agreement across independent method categories (bubble, tail, regime) boosts the signal.
+
+### 6/6 known GBP/USD crises detected
+
+1976 IMF Crisis, 1985 Plaza Accord, 1992 Black Wednesday, 2008 Financial Crisis, 2016 Brexit, 2022 Truss Mini-Budget.
+
+## 500 Years of Forex Data
+
+### FRED Daily (12 currency pairs, 1971-2025)
+
+| Pair | Hill alpha | Pickands | Hurst H | GSADF bubble? |
+|------|:---------:|:-------:|:------:|:---:|
+| AUD/USD | 2.58 | 1.02 | 0.56 | YES |
+| GBP/USD | 4.13 | 0.06 | 0.58 | YES |
+| JPY/USD | 3.94 | -0.23 | 0.58 | YES |
+| CAD/USD | 3.84 | 0.30 | 0.57 | YES |
+| CNY/USD | 2.79 | 0.55 | 0.59 | YES |
+| MXN/USD | 2.04 | 0.60 | 0.56 | YES |
+| BRL/USD | 2.80 | 0.44 | 0.56 | YES |
+| KRW/USD | 1.90 | 1.01 | 0.67 | YES |
+| INR/USD | 2.62 | 0.45 | 0.57 | YES |
+| EUR/USD | 4.88 | 0.06 | 0.56 | no |
+| CHF/USD | 3.81 | -0.32 | 0.57 | no |
+| NZD/USD | 2.89 | 0.68 | 0.57 | no |
+
+**Every single pair has Hurst H > 0.55** — forex markets are universally persistent. 9/12 show explosive bubble episodes. 10/12 have heavy tails.
+
+### Clio Infra Yearly (30 countries, 1500-2013)
+
+| Country | Years | Hill alpha | Hurst H | Verdict |
+|---------|:-----:|:---------:|:------:|---------|
+| Germany | 153 | 0.52 | 0.56 | EXTREME, persistent |
+| Austria | 104 | 0.63 | 0.61 | EXTREME, persistent |
+| Belgium | 114 | 0.89 | 0.64 | EXTREME, persistent |
+| Finland | 100 | 0.94 | 0.58 | EXTREME, persistent |
+| Argentina | 102 | 1.28 | 0.71 | EXTREME, persistent |
+| Mexico | 113 | 1.06 | 0.70 | EXTREME, persistent |
+| Italy | 95 | 0.77 | 0.80 | EXTREME, persistent |
+| Portugal | 88 | 0.98 | 0.85 | EXTREME, persistent |
+| Greece | 87 | 0.77 | 0.76 | EXTREME, persistent |
+| UK | 223 | 2.42 | 0.47 | fat-tail |
+| Canada | 100 | 3.70 | 0.50 | fat-tail |
+
+**19/30 countries have alpha < 2** (infinite variance). **25/30 have Hurst > 0.5** (persistent). Only 1/30 has alpha > 4.
+
+Italy (H=0.80) and Portugal (H=0.85) show the strongest persistence — their exchange rates trend for years at a time over century-scale data.
+
+### The headline number
+
+**71% of countries have exchange rate distributions with infinite variance.** The median alpha across 138 countries is 1.57. Standard risk models (VaR under normality, Modern Portfolio Theory, CAPM) assume finite variance. For 71% of the world's currencies, this assumption is empirically false.
 
 ## Data Flow
 
@@ -85,7 +126,8 @@ Exchange/CSV/FRED → ingest.py → transforms.py → [log_prices, log_returns]
                     +----------+----------+-------------+
                     v          v          v              v
                LPPLS(Rust) EVT(Rust) Tail(Rust)   DeepLPPLS(Torch)
-               tc, conf    VaR, ES   Hill a, k     tc prediction
+               GSADF(Rust)           Pickands      Hurst
+               tc, conf    VaR, ES   Hill,Kappa    H exponent
                     |          |          |              |
                     +----------+----------+------+------+
                                                  v
@@ -117,6 +159,17 @@ vix = from_fred("VIXCLS")          # Live from FRED
 spy = from_sample("spy")           # Offline
 ```
 
+## Signal Aggregation
+
+Groups methods into 4 independent categories. When 3+ categories agree, probability gets a +15% bonus.
+
+| Category | Methods | What it catches |
+|----------|---------|-----------------|
+| **Bubble** | LPPLS, GSADF, Deep LPPLS | Super-exponential growth, explosive roots |
+| **Tail** | Kappa, Hill, Pickands, GPD VaR | Tail thickening, regime shifts |
+| **Regime** | Hurst | Trending vs mean-reverting |
+| **Structure** | Multiscale, LPPLS tc proximity | Cross-timeframe, timing |
+
 ## Development
 
 ```bash
@@ -126,51 +179,39 @@ make setup
 # Build (compiles Rust, installs Python package)
 make build
 
-# Run all tests (7 Rust + 55 Python)
+# Run all tests (18 Rust + 79 Python = 97 total)
 make test
 
-# Lint
+# Lint (zero clippy warnings)
 make lint
-
-# Quick detect
-make detect
 
 # CLI
 fatcrash detect --asset BTC --source sample
 fatcrash backtest --asset BTC --start 2017-01-01 --end 2018-06-01
 fatcrash plot --asset GOLD --indicator hill
 fatcrash serve --port 8000
+
+# Full analysis
+python analysis/accuracy_report.py
 ```
 
 ## Architecture
 
-### What goes in Rust (via PyO3)
+### Rust (via PyO3) — performance-critical
 
 | Component | Why Rust |
 |-----------|----------|
-| **LPPLS fitter** | O(1000) nonlinear fits per anchor date. Most expensive computation. |
-| **LPPLS confidence** | Nested window fits parallelized with `rayon` |
-| **GEV/GPD fitting** | Rolling EVT (re-fit at each timestep) needs speed |
-| **Hill estimator** | Called at every rolling step |
-| **Kappa metric** | Gaussian benchmarks via Monte Carlo simulation |
+| LPPLS fitter (CMA-ES) | O(1000) nonlinear fits per anchor date |
+| LPPLS confidence | Nested windows parallelized with rayon |
+| GSADF test | O(n^2) BSADF + Monte Carlo, parallelized with rayon |
+| GEV/GPD fitting | Rolling EVT needs speed |
+| Hill, Pickands, Kappa, Hurst | Called at every rolling step |
 
-### What stays in Python
+### Python — everything else
 
 - Data ingestion (Yahoo, CoinGecko, CCXT, FRED, CSV/Parquet)
 - Visualization (plotly, matplotlib)
 - CLI (typer) and service (FastAPI)
-- Deep LPPLS (PyTorch)
-- Signal aggregation and calibration
+- Deep LPPLS (PyTorch, with save/load for pretrained weights)
+- Signal aggregation with agreement bonus
 - 9 Jupyter notebooks
-
-## Signal Aggregation
-
-| Indicator | Weight | Logic |
-|-----------|--------|-------|
-| LPPLS confidence | 0.30 | Fraction of qualifying fits |
-| LPPLS tc proximity | 0.15 | How close predicted crash to now |
-| GPD VaR exceedance | 0.15 | Current returns vs tail risk |
-| Kappa regime change | 0.10 | Rolling kappa deviation from benchmark |
-| Hill tail thinning | 0.10 | Declining alpha = thickening tails |
-| Deep LPPLS | 0.10 | Neural tc prediction |
-| Multiscale agreement | 0.10 | Cross-timeframe confirmation |

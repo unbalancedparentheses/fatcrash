@@ -2,26 +2,53 @@
 
 **71% of countries have exchange rate distributions with infinite variance.**
 
-The median tail index across 138 countries is alpha = 1.57. Standard risk models — VaR under normality, Sharpe ratios, CAPM — assume finite variance (alpha > 2) and often finite kurtosis (alpha > 4). For the majority of the world's currencies, these assumptions are empirically false.
+The median tail index across 138 countries is alpha = 1.57. Standard risk models assume finite variance (alpha > 2) and often finite kurtosis (alpha > 4). For the majority of the world's currencies, these assumptions are empirically false. fatcrash detects crashes by measuring what actually matters: the tail.
 
-fatcrash detects crashes via fat-tail statistics. Python + Rust (PyO3). 13 methods, 180 tests, 500 years of data.
+Python + Rust (PyO3). 13 methods. 180 tests. 500 years of data.
 
 ```python
 from fatcrash.data.ingest import from_sample
 from fatcrash.data.transforms import log_returns
-from fatcrash._core import hill_estimator, taleb_kappa, lppls_fit
+from fatcrash._core import (
+    hill_estimator, taleb_kappa, dfa_exponent,
+    deh_estimator, maxsum_ratio, spectral_exponent,
+)
 
 btc = from_sample("btc")
-returns = log_returns(btc)
+ret = log_returns(btc)
 
-hill_estimator(returns)                        # 2.87 — infinite kurtosis
-taleb_kappa(returns)                           # (0.34, 0.09) — CLT barely operates
+hill_estimator(ret)      # 2.87 — infinite kurtosis
+taleb_kappa(ret)         # (0.34, 0.09) — CLT barely operates
+dfa_exponent(ret)        # 0.56 — persistent dynamics
+deh_estimator(ret)       # 0.31 — heavy-tailed (gamma > 0)
+maxsum_ratio(ret)        # 0.003 — single obs doesn't dominate (alpha > 2)
+spectral_exponent(ret)   # 0.04 — weak long memory
 ```
 
 ```bash
 fatcrash detect --asset BTC --source sample
 fatcrash backtest --asset BTC --start 2017-01-01 --end 2018-06-01
 ```
+
+## Why This Exists
+
+### The ergodicity problem
+
+Classical finance evaluates gambles by their expected value — the ensemble average over all possible outcomes at a single point in time. Peters (2019) showed this is the wrong quantity for a single agent who must live through outcomes sequentially. In a multiplicative process like investing, the time-average growth rate and the ensemble-average growth rate diverge. The process is non-ergodic.
+
+A gamble that pays +50% or -40% with equal probability has positive expected value (+5% per round) but negative time-average growth: log(1.5 * 0.6) / 2 = -5.3% per round. Over enough rounds, a single participant goes bankrupt with certainty despite the "positive EV."
+
+Fat tails amplify this divergence. When alpha < 2 (infinite variance), the ensemble average is dominated by rare outcomes that no individual trajectory will realize. The sample mean does not converge at the rate prescribed by the CLT. Taleb (2020) quantifies this: for alpha near 1, the CLT does not operate at any practical sample size.
+
+### What breaks
+
+Standard risk metrics presuppose:
+
+1. **Finite variance** — requires alpha > 2. Violated for 71% of countries.
+2. **Rapid CLT convergence** — requires alpha > 4. Violated for 97% of countries.
+3. **Ergodicity** — ensemble average = time average. Violated for all multiplicative processes with fat tails.
+
+VaR under normality, Sharpe ratios, CAPM betas, mean-variance optimization — all of these produce nonsense when the underlying distribution has infinite variance. fatcrash measures the tail directly so you know which regime you're in.
 
 ## Results
 
@@ -43,7 +70,7 @@ fatcrash backtest --asset BTC --start 2017-01-01 --end 2018-06-01
 | Spectral | 21% | 29% | 38% | 28% |
 | Hill | 29% | 29% | 25% | 28% |
 
-LPPLS detects all 39 drawdowns. DFA is the best non-bubble method at 82% — detrended fluctuation analysis handles non-stationarity better than R/S Hurst. DEH is most useful on major crashes (62%). Hill alpha alone is unreliable (28%) but contributes to the aggregate.
+LPPLS detects all 39 drawdowns — it fits the bubble *shape*, not just tail statistics. DFA is the best non-bubble method at 82%, outperforming Hurst R/S (59%) because detrended fluctuation analysis handles non-stationarity. DEH and Taleb kappa are most useful on major crashes (62% and 50%) where the tail structure genuinely deteriorates. Hill alpha alone is unreliable (28%) but contributes to the aggregate.
 
 ### Combined detector
 
@@ -51,7 +78,7 @@ LPPLS detects all 39 drawdowns. DFA is the best non-bubble method at 82% — det
 |--------|:---:|:---:|:---:|:---:|
 | **All methods + agreement bonus** | **64%** | **94%** | **75%** | **79%** |
 
-When 3+ independent method categories (bubble, tail, regime) agree, the probability gets a +15% bonus. With 13 methods across 4 categories, the agreement signal is more robust.
+When 3+ independent method categories (bubble, tail, regime, structure) agree, the probability gets a +15% bonus. No single method is reliable alone; the ensemble is.
 
 ### 6/6 known GBP/USD crises detected
 
@@ -61,27 +88,32 @@ When 3+ independent method categories (bubble, tail, regime) agree, the probabil
 
 ### FRED Daily (12 currency pairs, 1971-2025)
 
-| Pair | Hill | Pickands | Hurst | DFA | DEH | QQ | MaxSum | Spectral | GSADF? |
-|------|:----:|:-------:|:-----:|:---:|:---:|:--:|:------:|:--------:|:------:|
-| AUD/USD | 2.58 | 1.02 | 0.56 | 0.56 | 0.44 | 2.30 | 0.003 | 0.001 | YES |
-| GBP/USD | 4.13 | 0.06 | 0.58 | 0.55 | 0.19 | 4.11 | 0.001 | 0.009 | YES |
-| JPY/USD | 3.94 | -0.23 | 0.58 | 0.58 | 0.18 | 4.02 | 0.002 | 0.028 | YES |
-| CAD/USD | 3.84 | 0.30 | 0.57 | 0.53 | 0.27 | 3.58 | 0.001 | -0.022 | YES |
-| CNY/USD | 2.79 | 0.55 | 0.59 | 0.71 | 0.69 | 1.70 | 0.038 | 0.027 | YES |
-| MXN/USD | 2.04 | 0.60 | 0.56 | 0.57 | 0.44 | 1.98 | 0.005 | 0.052 | YES |
-| BRL/USD | 2.80 | 0.44 | 0.56 | 0.58 | 0.15 | 3.12 | 0.002 | 0.081 | YES |
-| KRW/USD | 1.90 | 1.01 | 0.67 | 0.60 | 0.44 | 1.93 | 0.006 | 0.094 | YES |
-| INR/USD | 2.62 | 0.45 | 0.57 | 0.58 | 0.34 | 2.56 | 0.004 | 0.026 | YES |
-| EUR/USD | 4.88 | 0.06 | 0.56 | 0.54 | 0.12 | 4.90 | 0.002 | 0.008 | no |
-| CHF/USD | 3.81 | -0.32 | 0.57 | 0.54 | 0.28 | 3.59 | 0.002 | 0.023 | no |
-| NZD/USD | 2.89 | 0.68 | 0.57 | 0.56 | 0.44 | 2.46 | 0.003 | 0.007 | no |
+| Pair | Hill alpha | QQ alpha | DEH gamma | Hurst H | DFA alpha | GSADF bubble? |
+|------|:---------:|:-------:|:--------:|:------:|:--------:|:---:|
+| AUD/USD | 2.58 | 2.30 | 0.44 | 0.56 | 0.56 | YES |
+| GBP/USD | 4.13 | 4.11 | 0.19 | 0.58 | 0.55 | YES |
+| JPY/USD | 3.94 | 4.02 | 0.18 | 0.58 | 0.58 | YES |
+| CAD/USD | 3.84 | 3.58 | 0.27 | 0.57 | 0.53 | YES |
+| CNY/USD | 2.79 | 1.70 | 0.69 | 0.59 | 0.71 | YES |
+| MXN/USD | 2.04 | 1.98 | 0.44 | 0.56 | 0.57 | YES |
+| BRL/USD | 2.80 | 3.12 | 0.15 | 0.56 | 0.58 | YES |
+| KRW/USD | 1.90 | 1.93 | 0.44 | 0.67 | 0.60 | YES |
+| INR/USD | 2.62 | 2.56 | 0.34 | 0.57 | 0.58 | YES |
+| EUR/USD | 4.88 | 4.90 | 0.12 | 0.56 | 0.54 | no |
+| CHF/USD | 3.81 | 3.59 | 0.28 | 0.57 | 0.54 | no |
+| NZD/USD | 2.89 | 2.46 | 0.44 | 0.57 | 0.56 | no |
 
-All 12 pairs: Hurst H > 0.55 and DFA > 0.5 (universal persistence). DEH > 0 for all 12 (heavy tails confirmed). 9/12 show GSADF bubbles. Mean QQ alpha = 3.02 — consistent with Hill mean of 3.19. Mean Spectral d = 0.03 confirms weak long memory from the frequency domain.
+Universals across all 12 pairs:
+- **Fat tails**: DEH gamma > 0 for 12/12. Mean Hill alpha = 3.19, mean QQ alpha = 3.02 — two independent estimators converge.
+- **Persistence**: Hurst H > 0.55 for 12/12, DFA alpha > 0.5 for 12/12.
+- **Bubbles**: 9/12 show explosive episodes via GSADF.
+
+KRW/USD has the fattest tails (Hill alpha = 1.90, approaching infinite variance). CNY/USD shows the strongest persistence (DFA = 0.71) — consistent with managed float dynamics.
 
 ### Clio Infra Yearly (30 countries, 1500-2013)
 
 | Country | Years | Hill alpha | Hurst H | Taleb kappa | Verdict |
-|---------|:-----:|:---------:|:------:|:------:|---------|
+|---------|:-----:|:---------:|:------:|:----------:|---------|
 | Germany | 153 | 0.52 | 0.56 | 1.00 | EXTREME, persistent |
 | Austria | 104 | 0.63 | 0.61 | 1.00 | EXTREME, persistent |
 | Belgium | 114 | 0.89 | 0.64 | 0.86 | EXTREME, persistent |
@@ -94,88 +126,87 @@ All 12 pairs: Hurst H > 0.55 and DFA > 0.5 (universal persistence). DEH > 0 for 
 | UK | 223 | 2.42 | 0.47 | 0.04 | fat-tail |
 | Canada | 100 | 3.70 | 0.50 | 0.00 | fat-tail |
 
-19/30 countries have alpha < 2 (infinite variance). 25/30 have Hurst > 0.5, 28/30 have DFA > 0.5 (persistent). DEH > 0 for 20/30, QQ alpha < 4 for 28/30. Germany, Austria, Argentina, and Portugal saturate at Taleb kappa = 1.0 — Cauchy-like behavior where the CLT does not operate at any practical sample size.
+Summary across 30 countries:
+- 19/30 have alpha < 2 (infinite variance)
+- 28/30 have DFA > 0.5, 25/30 have Hurst > 0.5 (persistent)
+- 20/30 have DEH gamma > 0, 28/30 have QQ alpha < 4 (heavy tails confirmed by all estimators)
 
-Italy (H=0.80, DFA=1.44) and Portugal (H=0.85) show the strongest persistence over century-scale data.
+Germany, Austria, Argentina, and Portugal saturate at Taleb kappa = 1.0 — Cauchy-like behavior where the CLT does not operate at any practical sample size. Italy (H = 0.80, DFA = 1.44) and Portugal (H = 0.85) show the strongest persistence over century-scale data.
 
-## Why This Exists
+## The 13 Methods
 
-### The ergodicity problem
+### Overview
 
-Classical finance evaluates gambles by their expected value — the ensemble average over all possible outcomes at a single point in time. Peters (2019) showed that this is the wrong quantity for a single agent who must live through outcomes sequentially. In a multiplicative process like investing, the time-average growth rate and the ensemble-average growth rate are not equal. The process is non-ergodic.
-
-A gamble that pays +50% or -40% with equal probability has a positive expected value (+5% per round) but a negative time-average growth rate: log(1.5 * 0.6) / 2 = -5.3% per round. Over enough rounds, a single participant goes bankrupt with certainty despite the "positive EV."
-
-This divergence is amplified by fat tails. When alpha < 2 (infinite variance), the ensemble average is dominated by rare outcomes that no individual trajectory will realize. The sample mean does not converge at the rate prescribed by the CLT. Taleb (2020) quantifies this: for alpha near 1, the CLT does not operate at any practical sample size.
-
-### Implications
-
-Standard risk metrics presuppose:
-
-1. Finite variance (requires alpha > 2)
-2. Rapid convergence of the sample mean (requires alpha > 4)
-3. Ergodicity (ensemble average = time average)
-
-Our data shows 71% of countries have alpha < 2, and 97% have alpha < 4. All three presuppositions are violated for most financial instruments.
-
-## The Methods
+| # | Method | What it measures | Key output |
+|---|--------|-----------------|------------|
+| 1 | Hill | Tail index from order statistics | alpha (< 2 = infinite variance) |
+| 2 | Pickands | Extreme value index, all domains | gamma (> 0 = heavy tail) |
+| 3 | DEH | Tail index via moment estimator | gamma (> 0 = heavy tail) |
+| 4 | QQ | Tail index from QQ-plot slope | alpha (< 4 = fat tail) |
+| 5 | Taleb kappa | CLT convergence rate | kappa (0 = Gaussian, 1 = Cauchy) |
+| 6 | Max-stability kappa | Block-max concentration | kappa vs benchmark |
+| 7 | Max-to-Sum | Infinite variance diagnostic | ratio (> 0 if alpha < 2) |
+| 8 | Hurst | Persistence via R/S analysis | H (> 0.5 = trending) |
+| 9 | DFA | Persistence, non-stationary-robust | alpha (> 0.5 = trending) |
+| 10 | Spectral | Long memory from frequency domain | d (> 0 = long memory) |
+| 11 | GPD | Tail risk (VaR, ES) | VaR, Expected Shortfall |
+| 12 | GEV | Block maxima classification | Frechet / Gumbel / Weibull |
+| 13 | LPPLS + GSADF | Bubble detection | critical time, confidence |
 
 ### Tail estimation
 
-**Hill estimator** (Hill, 1975). Estimates the tail index alpha from the k largest order statistics: alpha_hat = [1/k * sum log(X_(i) / X_(k+1))]^(-1). The tail index governs tail decay: P(X > x) ~ x^(-alpha). Alpha < 2 means infinite variance; alpha < 4 means infinite kurtosis.
+**Hill estimator** (Hill, 1975). Estimates alpha from the k largest order statistics: alpha = [1/k * sum log(X_(i) / X_(k+1))]^(-1). The tail index governs tail decay: P(X > x) ~ x^(-alpha). Alpha < 2 means infinite variance; alpha < 4 means infinite kurtosis. Includes Huisman et al. (2001) small-sample bias correction.
 
-**Pickands estimator** (Pickands, 1975). Estimates the extreme value index gamma = 1/alpha using three order statistics: gamma_hat = log((X_(k) - X_(2k)) / (X_(2k) - X_(4k))) / log(2). Valid for all three domains of attraction (Frechet, Gumbel, Weibull), unlike Hill which assumes heavy tails. Less efficient but more robust.
+**Pickands estimator** (Pickands, 1975). Estimates gamma = 1/alpha using three order statistics: gamma = log((X_(k) - X_(2k)) / (X_(2k) - X_(4k))) / log(2). Valid for all three domains of attraction (Frechet, Gumbel, Weibull), unlike Hill which assumes heavy tails.
 
-**Taleb's kappa** (Taleb, 2019). Measures the rate of convergence of the Mean Absolute Deviation of partial sums: kappa = 2 - log(n/n0) / log(M(n)/M(n0)), where M(n) = E[|S_n - E[S_n]|]. Under the CLT, M(n) ~ sqrt(n), giving kappa = 0. For Cauchy, M(n) ~ n, giving kappa = 1. This answers a question asymptotic theory cannot: how many observations do you actually need? (BTC: 0.34, SPY: 0.03, Gold: 0.00.)
+**DEH moment estimator** (Dekkers, Einmahl & de Haan, 1989). Uses first and second moments of log-spacings: gamma = M1 + 1 - (1/2)(1 - M1^2/M2)^(-1). Valid for all domains of attraction. Complements Hill (heavy-tail only) and Pickands (higher variance).
 
-**Max-stability kappa.** Partitions data into k blocks, computes the mean of block maxima divided by the global maximum. For Gaussian data this ratio is near the Monte Carlo benchmark; for fat-tailed data, a single extreme observation dominates and the ratio drops.
+**QQ estimator.** Regresses log(X_(i)) vs -log(i/(k+1)) for the k largest observations. Slope = 1/alpha. Simple, visual, good for regime change detection in rolling windows.
 
-**DEH moment estimator** (Dekkers, Einmahl & de Haan, 1989). Tail index estimator valid for all domains of attraction, not just heavy tails. Uses first and second moments of log-spacings: gamma = M1 + 1 - (1/2)(1 - M1^2/M2)^(-1). Complements Hill (heavy-tail only) and Pickands (less efficient).
+**Taleb's kappa** (Taleb, 2019). Measures how fast the sample mean converges: kappa = 2 - log(n/n0) / log(M(n)/M(n0)), where M(n) = E[|S_n - E[S_n]|]. Under the CLT, M(n) ~ sqrt(n), giving kappa = 0. For Cauchy, M(n) ~ n, giving kappa = 1. Answers what asymptotic theory cannot: *how many observations do you actually need?*
 
-**QQ estimator.** Tail index from the slope of a log-log QQ plot against exponential quantiles. For the k largest observations, regress log(X_(i)) vs -log(i/(k+1)). Slope = 1/alpha. Simple, visual, good for tracking tail index regime changes over time.
+**Max-stability kappa.** Partitions data into blocks, computes mean-of-block-maxima / global-maximum. For Gaussian data this ratio is near a Monte Carlo benchmark; for fat-tailed data, a single extreme dominates and the ratio drops.
 
-**Maximum-to-Sum ratio.** R_n = max(|X_i|) / sum(|X_i|) — a direct diagnostic for infinite variance. R_n -> 0 for thin tails (alpha > 2); R_n stays positive when alpha < 2. The simplest test of whether variance exists.
+**Maximum-to-Sum ratio.** R_n = max(|X_i|) / sum(|X_i|). Converges to zero for thin tails (alpha > 2); stays positive when alpha < 2. The simplest diagnostic for whether variance exists.
 
 ### Long-range dependence
 
-**Hurst exponent** (Hurst, 1951). Quantifies persistence via rescaled range analysis. H = 0.5 is a random walk; H > 0.5 means trends persist; H < 0.5 means mean-reversion. All 12 FRED daily forex pairs show H > 0.55.
+**Hurst exponent** (Hurst, 1951). Persistence via rescaled range (R/S) analysis. H = 0.5 is a random walk; H > 0.5 means trends persist; H < 0.5 means mean-reversion.
 
-**DFA** (Detrended Fluctuation Analysis; Peng et al., 1994). Alternative to Hurst R/S that handles non-stationarity better. Divides into windows, fits linear trend per window, computes RMS of residuals, regresses log(RMS) vs log(window_size). Returns alpha exponent: 0.5 = white noise, >0.5 persistent. Best non-bubble crash detector at 82% accuracy.
+**DFA** (Peng et al., 1994). Detrended fluctuation analysis: divides into windows, removes linear trend per window, regresses log(RMS of residuals) vs log(window size). Handles non-stationarity better than R/S — best non-bubble crash detector at 82%.
 
-**Spectral exponent** (Geweke & Porter-Hudak, 1983). Estimates long-memory parameter d from the periodogram near frequency zero: f(lambda) ~ |lambda|^(1-2d). Relationship to Hurst: d = H - 0.5. Complements Hurst (time domain) and DFA (detrended) from the frequency domain.
+**Spectral exponent** (Geweke & Porter-Hudak, 1983). Estimates long-memory parameter d from the periodogram near frequency zero: f(lambda) ~ |lambda|^(1-2d). Relation to Hurst: d = H - 0.5. Confirms persistence from the frequency domain.
 
 ### Extreme value theory
 
-**GPD** (Balkema & de Haan, 1974). Fits exceedances over a threshold to the Generalized Pareto Distribution: F_u(x) = 1 - (1 + xi*x/sigma)^(-1/xi). Yields VaR and Expected Shortfall at arbitrary confidence levels.
+**GPD** (Balkema & de Haan, 1974). Fits exceedances over a threshold to the Generalized Pareto Distribution. Yields VaR and Expected Shortfall at arbitrary confidence levels.
 
 **GEV** (Fisher & Tippett, 1928). Fits block maxima to the Generalized Extreme Value distribution. Classifies into Frechet (xi > 0, heavy tail), Gumbel (xi = 0, exponential), or Weibull (xi < 0, bounded).
 
 ### Bubble detection
 
-**LPPLS** (Sornette, 2003). Models bubble dynamics as a power law with log-periodic oscillations: log(p(t)) = A + B|tc-t|^m + C|tc-t|^m * cos(omega*log|tc-t| + phi). The critical time tc is the predicted crash date. The DS confidence indicator fits across many windows; the fraction of valid fits is the confidence measure. Nonlinear optimization via CMA-ES (Hansen, 2006) in Rust — each anchor date needs O(1000) evaluations.
+**LPPLS** (Sornette, 2003). Models bubble dynamics as a power law with log-periodic oscillations: log(p(t)) = A + B|tc-t|^m + C|tc-t|^m * cos(omega*log|tc-t| + phi). The critical time tc is the predicted crash date. Confidence measured by fitting across many windows. Nonlinear optimization via CMA-ES in Rust.
 
-**Deep LPPLS.** A PyTorch neural network that recognizes LPPLS-like patterns without explicit parametric fitting. Faster and more robust to deviations from the strict LPPLS form, at the cost of interpretability.
+**Deep LPPLS.** PyTorch neural network that recognizes LPPLS-like patterns without explicit parametric fitting. Faster and more robust to deviations from the strict LPPLS form.
 
-**GSADF** (Phillips, Shi & Yu, 2015). Detects explosive unit root behavior — the econometric signature of bubbles. The test statistic is the supremum of recursive ADF statistics over all feasible subsamples. Monte Carlo critical values under the null of a random walk. O(n^2) computation parallelized with rayon. Complements LPPLS: LPPLS detects bubble *shape*, GSADF detects *explosive growth*.
-
-### Multiscale
-
-Indicators computed at daily, 3-day, and weekly frequencies. A signal at one scale may be noise; a signal across all three is structural.
+**GSADF** (Phillips, Shi & Yu, 2015). Detects explosive unit root behavior — the econometric signature of bubbles. The supremum of recursive ADF statistics over all feasible subsamples, with Monte Carlo critical values. Complements LPPLS: LPPLS detects bubble *shape*, GSADF detects *explosive growth*.
 
 ## Signal Aggregation
 
 Methods grouped into 4 independent categories. When 3+ categories agree, probability gets a +15% bonus.
 
-| Category | Methods | Signal |
-|----------|---------|--------|
+| Category | Methods | What it detects |
+|----------|---------|-----------------|
 | **Bubble** | LPPLS, GSADF, Deep LPPLS | Super-exponential growth, explosive unit roots |
-| **Tail** | Taleb Kappa, Max-Stability Kappa, Hill, Pickands, DEH, QQ, Max-to-Sum, GPD VaR | Tail thickening, distributional regime shifts |
+| **Tail** | Hill, Pickands, DEH, QQ, Taleb Kappa, Max-Stability Kappa, Max-to-Sum, GPD | Tail thickening, distributional regime shifts |
 | **Regime** | Hurst, DFA, Spectral | Transition from mean-reverting to persistent dynamics |
 | **Structure** | Multiscale, LPPLS tc proximity | Cross-timeframe agreement, timing |
 
+Indicators are also computed at daily, 3-day, and weekly frequencies. A signal at one scale may be noise; a signal across all three is structural.
+
 ## Architecture
 
-### Rust (via PyO3)
+All 13 estimators are implemented in Rust and exposed to Python via PyO3. The computationally intensive methods (LPPLS, GSADF) use rayon for parallelization.
 
 | Component | Why Rust |
 |-----------|----------|
@@ -183,11 +214,9 @@ Methods grouped into 4 independent categories. When 3+ categories agree, probabi
 | LPPLS confidence | Nested windows parallelized with rayon |
 | GSADF test | O(n^2) BSADF + Monte Carlo, parallelized with rayon |
 | GEV/GPD fitting | Rolling EVT needs speed |
-| Hill, Pickands, DEH, QQ, Max-to-Sum, Taleb Kappa, Max-Stability Kappa, Hurst, DFA, Spectral | Called at every rolling step |
+| All tail & regime estimators | Called at every rolling window step |
 
-### Python
-
-Data ingestion (Yahoo, CoinGecko, CCXT, FRED, CSV/Parquet), visualization (plotly, matplotlib), CLI (typer), service (FastAPI), Deep LPPLS (PyTorch), signal aggregation, 9 Jupyter notebooks.
+Python handles data ingestion (Yahoo, CoinGecko, CCXT, FRED, CSV/Parquet), visualization (plotly, matplotlib), CLI (typer), service (FastAPI), Deep LPPLS (PyTorch), signal aggregation, and 9 Jupyter notebooks.
 
 ## Sample Data
 
@@ -211,7 +240,7 @@ make setup                   # Install Python deps + build Rust extension
 make build                   # Recompile Rust, install into venv
 make test                    # 35 Rust + 145 Python = 180 tests
 make lint                    # cargo clippy + cargo fmt --check
-python analysis/accuracy_report.py   # Full analysis
+python analysis/accuracy_report.py   # Full analysis across all methods and timescales
 ```
 
 With [direnv](https://direnv.net/): `direnv allow` and the shell activates on `cd`.
@@ -228,6 +257,7 @@ With [direnv](https://direnv.net/): `direnv allow` and the shell activates on `c
 
 - Hill, B.M. (1975). "A Simple General Approach to Inference About the Tail of a Distribution." *Ann. Statist.*, 3(5), 1163-1174.
 - Pickands, J. (1975). "Statistical Inference Using Extreme Order Statistics." *Ann. Statist.*, 3(1), 119-131.
+- Dekkers, A.L.M., Einmahl, J.H.J. & de Haan, L. (1989). "A Moment Estimator for the Index of an Extreme-Value Distribution." *Ann. Statist.*, 17(4), 1833-1855.
 - Taleb, N.N. (2019). "How Much Data Do You Need? An Operational, Pre-Asymptotic Metric for Fat-tailedness." *Int. J. Forecasting*, 35(2), 677-686. [arXiv:1802.05495](https://arxiv.org/abs/1802.05495)
 - Taleb, N.N. (2020). *Statistical Consequences of Fat Tails.* STEM Academic Press. [arXiv:2001.10488](https://arxiv.org/abs/2001.10488)
 
@@ -237,6 +267,13 @@ With [direnv](https://direnv.net/): `direnv allow` and the shell activates on `c
 - Balkema, A.A. & de Haan, L. (1974). "Residual Life Time at Great Age." *Ann. Probab.*, 2(5), 792-804.
 - Fisher, R.A. & Tippett, L.H.C. (1928). "Limiting Forms of the Frequency Distribution of the Largest or Smallest Member of a Sample." *Proc. Cambridge Phil. Soc.*, 24(2), 180-190.
 
+### Long-Range Dependence
+
+- Hurst, H.E. (1951). "Long-Term Storage Capacity of Reservoirs." *Trans. ASCE*, 116, 770-799.
+- Peng, C.-K. et al. (1994). "Mosaic Organization of DNA Nucleotides." *Physical Review E*, 49(2), 1685-1689.
+- Geweke, J. & Porter-Hudak, S. (1983). "The Estimation and Application of Long Memory Time Series Models." *J. Time Series Analysis*, 4(4), 221-238.
+- Lo, A.W. (1991). "Long-Term Memory in Stock Market Prices." *Econometrica*, 59(5), 1279-1313.
+
 ### Bubble Detection
 
 - Sornette, D. (2003). *Why Stock Markets Crash.* Princeton University Press.
@@ -244,17 +281,6 @@ With [direnv](https://direnv.net/): `direnv allow` and the shell activates on `c
 - Phillips, P.C.B., Shi, S. & Yu, J. (2015). "Testing for Multiple Bubbles." *Int. Econ. Rev.*, 56(4), 1043-1078.
 - Phillips, P.C.B., Wu, Y. & Yu, J. (2011). "Explosive Behavior in the 1990s NASDAQ." *Int. Econ. Rev.*, 52(1), 201-226.
 - Hansen, N. (2006). "The CMA Evolution Strategy: A Comparing Review." In *Towards a New Evolutionary Computation*, Springer, 75-102.
-
-### Tail Estimation (additional)
-
-- Dekkers, A.L.M., Einmahl, J.H.J. & de Haan, L. (1989). "A Moment Estimator for the Index of an Extreme-Value Distribution." *Ann. Statist.*, 17(4), 1833-1855.
-
-### Long-Range Dependence
-
-- Hurst, H.E. (1951). "Long-Term Storage Capacity of Reservoirs." *Trans. ASCE*, 116, 770-799.
-- Lo, A.W. (1991). "Long-Term Memory in Stock Market Prices." *Econometrica*, 59(5), 1279-1313.
-- Peng, C.-K. et al. (1994). "Mosaic Organization of DNA Nucleotides." *Physical Review E*, 49(2), 1685-1689.
-- Geweke, J. & Porter-Hudak, S. (1983). "The Estimation and Application of Long Memory Time Series Models." *J. Time Series Analysis*, 4(4), 221-238.
 
 ### Fat Tails in Finance
 

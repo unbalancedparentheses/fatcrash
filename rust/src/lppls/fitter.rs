@@ -1,12 +1,13 @@
-use numpy::{PyArray1, PyReadonlyArray1};
+use numpy::PyReadonlyArray1;
 use pyo3::prelude::*;
 use rand::prelude::*;
 
 use super::filter::{passes_filter, FilterConfig};
 use super::model::{solve_linear, LpplsParams};
 
-/// CMA-ES inspired stochastic search for LPPLS nonlinear parameters.
+/// Population-based stochastic search for LPPLS nonlinear parameters.
 /// Searches over (tc, m, omega) space, solving linear params via OLS at each point.
+/// Tracks both the best overall fit and the best filter-passing fit.
 
 struct SearchBounds {
     tc_min: f64,
@@ -17,8 +18,6 @@ struct SearchBounds {
     omega_max: f64,
 }
 
-/// Simple population-based search (simplified CMA-ES).
-/// For each candidate (tc, m, omega), solve OLS for (A, B, C1, C2).
 fn search_lppls(
     times: &[f64],
     log_prices: &[f64],
@@ -30,10 +29,9 @@ fn search_lppls(
     let mut rng = StdRng::seed_from_u64(seed);
     let filter_config = FilterConfig::default();
 
-    let mut best_params: Option<LpplsParams> = None;
-    let mut best_rss = f64::INFINITY;
+    let mut best_filtered: Option<(LpplsParams, f64)> = None;
+    let mut best_unfiltered: Option<(LpplsParams, f64)> = None;
 
-    // Mean and std for each parameter
     let mut mean = [
         (bounds.tc_min + bounds.tc_max) / 2.0,
         (bounds.m_min + bounds.m_max) / 2.0,
@@ -46,49 +44,74 @@ fn search_lppls(
     ];
 
     for _gen in 0..n_generations {
-        let mut candidates: Vec<([f64; 3], f64, Option<LpplsParams>)> =
-            Vec::with_capacity(pop_size);
+        let mut candidates: Vec<([f64; 3], f64)> = Vec::with_capacity(pop_size);
 
         for _ in 0..pop_size {
-            // Sample candidate
-            let tc = (mean[0] + sigma[0] * rng.gen_range(-1.0..1.0))
-                .clamp(bounds.tc_min, bounds.tc_max);
-            let m = (mean[1] + sigma[1] * rng.gen_range(-1.0..1.0))
-                .clamp(bounds.m_min, bounds.m_max);
+            let tc =
+                (mean[0] + sigma[0] * rng.gen_range(-1.0..1.0)).clamp(bounds.tc_min, bounds.tc_max);
+            let m =
+                (mean[1] + sigma[1] * rng.gen_range(-1.0..1.0)).clamp(bounds.m_min, bounds.m_max);
             let omega = (mean[2] + sigma[2] * rng.gen_range(-1.0..1.0))
                 .clamp(bounds.omega_min, bounds.omega_max);
 
             if let Some((a, b, c1, c2, rss)) = solve_linear(times, log_prices, tc, m, omega) {
                 let params = LpplsParams {
-                    tc, m, omega, a, b, c1, c2,
+                    tc,
+                    m,
+                    omega,
+                    a,
+                    b,
+                    c1,
+                    c2,
                 };
-                candidates.push(([tc, m, omega], rss, Some(params)));
-            }
-        }
+                candidates.push(([tc, m, omega], rss));
 
-        // Sort by RSS
-        candidates.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
+                // Track best filter-passing fit
+                if passes_filter(&params, &filter_config) {
+                    match &best_filtered {
+                        Some((_, prev_rss)) if rss < *prev_rss => {
+                            best_filtered = Some((params.clone(), rss));
+                        }
+                        None => {
+                            best_filtered = Some((params.clone(), rss));
+                        }
+                        _ => {}
+                    }
+                }
 
-        // Update best
-        if let Some(ref top) = candidates.first() {
-            if top.1 < best_rss {
-                if let Some(ref p) = top.2 {
-                    best_rss = top.1;
-                    best_params = Some(p.clone());
+                // Track best overall fit (fallback)
+                match &best_unfiltered {
+                    Some((_, prev_rss)) if rss < *prev_rss => {
+                        best_unfiltered = Some((params, rss));
+                    }
+                    None => {
+                        best_unfiltered = Some((params, rss));
+                    }
+                    _ => {}
                 }
             }
         }
 
-        // Update mean/sigma from top 25%
-        let elite_count = (pop_size / 4).max(2);
-        let elite: Vec<&([f64; 3], f64, Option<LpplsParams>)> =
-            candidates.iter().take(elite_count).collect();
+        // Sort by RSS for elite selection
+        candidates.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
+
+        // Update distribution from top 25%
+        let n_valid = candidates.len();
+        if n_valid == 0 {
+            continue;
+        }
+        let elite_count = (n_valid / 4).max(1);
 
         for dim in 0..3 {
-            let elite_mean =
-                elite.iter().map(|c| c.0[dim]).sum::<f64>() / elite_count as f64;
-            let elite_var = elite
+            let elite_mean: f64 = candidates
                 .iter()
+                .take(elite_count)
+                .map(|c| c.0[dim])
+                .sum::<f64>()
+                / elite_count as f64;
+            let elite_var: f64 = candidates
+                .iter()
+                .take(elite_count)
                 .map(|c| (c.0[dim] - elite_mean).powi(2))
                 .sum::<f64>()
                 / elite_count as f64;
@@ -97,17 +120,18 @@ fn search_lppls(
         }
     }
 
-    best_params.map(|p| (p, best_rss))
+    // Prefer filter-passing fit; fall back to best unfiltered
+    best_filtered.or(best_unfiltered)
 }
 
 /// Fit LPPLS model to log-price time series.
 /// Returns (tc, m, omega, a, b, c1, c2, rss) or raises error.
 #[pyfunction]
 #[pyo3(signature = (times, log_prices, tc_range=None, pop_size=50, n_generations=40, seed=42))]
-pub fn lppls_fit<'py>(
-    py: Python<'py>,
-    times: PyReadonlyArray1<'py, f64>,
-    log_prices: PyReadonlyArray1<'py, f64>,
+pub fn lppls_fit(
+    _py: Python<'_>,
+    times: PyReadonlyArray1<'_, f64>,
+    log_prices: PyReadonlyArray1<'_, f64>,
     tc_range: Option<(f64, f64)>,
     pop_size: Option<usize>,
     n_generations: Option<usize>,

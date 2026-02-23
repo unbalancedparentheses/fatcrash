@@ -78,7 +78,10 @@ fn gev_fit_mle(data: &[f64]) -> (f64, f64, f64) {
             // xi
             for &delta in &[-xi_step, xi_step] {
                 let new_xi = xi + delta;
-                if new_xi > -0.5 && new_xi < 1.0 && neg_ll(mu, sigma, new_xi) < neg_ll(mu, sigma, xi) {
+                if new_xi > -0.5
+                    && new_xi < 1.0
+                    && neg_ll(mu, sigma, new_xi) < neg_ll(mu, sigma, xi)
+                {
                     xi = new_xi;
                     improved = true;
                 }
@@ -96,9 +99,7 @@ fn gev_fit_mle(data: &[f64]) -> (f64, f64, f64) {
 /// Fit GEV distribution to block maxima.
 /// Returns (mu, sigma, xi) — location, scale, shape.
 #[pyfunction]
-pub fn gev_fit(
-    data: PyReadonlyArray1<'_, f64>,
-) -> PyResult<(f64, f64, f64)> {
+pub fn gev_fit(data: PyReadonlyArray1<'_, f64>) -> PyResult<(f64, f64, f64)> {
     let data = data.as_slice()?;
     if data.len() < 10 {
         return Err(pyo3::exceptions::PyValueError::new_err(

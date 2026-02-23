@@ -5,8 +5,8 @@ use pyo3::prelude::*;
 /// Given sorted descending absolute exceedances, alpha = k / sum(ln(x_i / x_k))
 /// Returns alpha (tail index). Lower alpha = fatter tails.
 ///
-/// Includes Taleb's small-sample bias correction:
-///   alpha_corrected = alpha * (1 - 2/k) for k > 2
+/// Includes Huisman et al. (2001) small-sample bias correction:
+///   alpha_corrected = alpha * (1 - 1/k)
 fn hill_estimate(sorted_desc: &[f64], k: usize) -> f64 {
     if k == 0 || k >= sorted_desc.len() {
         return f64::NAN;
@@ -16,10 +16,7 @@ fn hill_estimate(sorted_desc: &[f64], k: usize) -> f64 {
         return f64::NAN;
     }
 
-    let sum_log: f64 = sorted_desc[..k]
-        .iter()
-        .map(|&x| (x / x_k).ln())
-        .sum();
+    let sum_log: f64 = sorted_desc[..k].iter().map(|&x| (x / x_k).ln()).sum();
 
     if sum_log <= 0.0 {
         return f64::NAN;
@@ -27,9 +24,9 @@ fn hill_estimate(sorted_desc: &[f64], k: usize) -> f64 {
 
     let alpha = k as f64 / sum_log;
 
-    // Taleb small-sample bias correction
+    // Small-sample bias correction (Huisman et al. 2001)
     if k > 2 {
-        alpha * (1.0 - 2.0 / k as f64)
+        alpha * (1.0 - 1.0 / k as f64)
     } else {
         alpha
     }
@@ -54,11 +51,15 @@ pub fn hill_estimator(
         data.iter().copied().filter(|x| *x > 0.0).collect()
     };
 
+    let n = values.len();
+    if n < 2 {
+        return Ok(f64::NAN);
+    }
+
     values.sort_by(|a, b| b.partial_cmp(a).unwrap_or(std::cmp::Ordering::Equal));
 
-    let n = values.len();
     let k = k.unwrap_or_else(|| (n as f64).sqrt() as usize);
-    let k = k.min(n - 1).max(1);
+    let k = k.min(n.saturating_sub(1)).max(1);
 
     Ok(hill_estimate(&values, k))
 }
@@ -91,9 +92,13 @@ pub fn hill_rolling<'py>(
             slice.iter().copied().filter(|x| *x > 0.0).collect()
         };
 
+        let vn = values.len();
+        if vn < 2 {
+            continue;
+        }
+
         values.sort_by(|a, b| b.partial_cmp(a).unwrap_or(std::cmp::Ordering::Equal));
 
-        let vn = values.len();
         let ki = k.unwrap_or_else(|| (vn as f64).sqrt() as usize);
         let ki = ki.min(vn.saturating_sub(1)).max(1);
 
@@ -109,7 +114,6 @@ mod tests {
 
     #[test]
     fn test_hill_pareto() {
-        // Generate Pareto(alpha=2) samples: x = u^(-1/alpha) where u ~ Uniform(0,1)
         use rand::prelude::*;
         let mut rng = StdRng::seed_from_u64(42);
         let alpha_true = 2.0;
@@ -121,18 +125,24 @@ mod tests {
             })
             .collect();
 
-        let mut sorted: Vec<f64> = samples.clone();
+        let mut sorted: Vec<f64> = samples;
         sorted.sort_by(|a, b| b.partial_cmp(a).unwrap());
 
         let k = (n as f64).sqrt() as usize;
         let alpha_hat = hill_estimate(&sorted, k);
 
-        // Should be close to 2.0 (within ~20% for this sample size)
         assert!(
             (alpha_hat - alpha_true).abs() < 0.5,
             "Hill estimate {} too far from true alpha {}",
             alpha_hat,
             alpha_true
         );
+    }
+
+    #[test]
+    fn test_hill_empty_input() {
+        let empty: Vec<f64> = vec![];
+        let result = hill_estimate(&empty, 0);
+        assert!(result.is_nan());
     }
 }

@@ -1,9 +1,9 @@
 use pyo3::prelude::*;
 
-mod lppls;
 mod evt;
-mod tail;
+mod lppls;
 mod multiscale;
+mod tail;
 mod utils;
 
 #[pymodule]

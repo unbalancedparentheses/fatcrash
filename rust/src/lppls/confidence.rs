@@ -43,7 +43,13 @@ fn fit_single_window(
             if rss < best_rss {
                 best_rss = rss;
                 let params = super::model::LpplsParams {
-                    tc, m, omega, a, b, c1, c2,
+                    tc,
+                    m,
+                    omega,
+                    a,
+                    b,
+                    c1,
+                    c2,
                 };
                 best_passes = passes_filter(&params, filter_config);
             }

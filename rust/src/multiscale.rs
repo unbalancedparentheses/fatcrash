@@ -5,14 +5,6 @@ use pyo3::prelude::*;
 /// Resamples data at different frequencies (e.g. 1D, 3D, 7D)
 /// and checks if signals agree across scales.
 
-/// Resample by taking every nth point.
-fn resample(data: &[f64], factor: usize) -> Vec<f64> {
-    data.iter()
-        .step_by(factor)
-        .copied()
-        .collect()
-}
-
 /// Compute agreement score across timeframes.
 /// Returns a value in [0, 1] where 1 = all scales agree.
 #[pyfunction]
@@ -45,7 +37,11 @@ pub fn multiscale_signals<'py>(
 
             // Agreement = geometric mean of signals across scales
             // Penalize disagreement (one high, others low)
-            let signals = [v1.max(0.0).min(1.0), v3.max(0.0).min(1.0), v7.max(0.0).min(1.0)];
+            let signals = [
+                v1.max(0.0).min(1.0),
+                v3.max(0.0).min(1.0),
+                v7.max(0.0).min(1.0),
+            ];
             let mean = (signals[0] * signals[1] * signals[2]).cbrt();
             agreement[i] = mean;
         }

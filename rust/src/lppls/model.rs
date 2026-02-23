@@ -87,7 +87,7 @@ pub fn solve_linear(
     let xtx = x.transpose() * &x;
     let xty = x.transpose() * &y;
 
-    let beta = xtx.try_inverse()?.clone() * xty;
+    let beta = xtx.try_inverse()? * xty;
 
     let a = beta[0];
     let b = beta[1];

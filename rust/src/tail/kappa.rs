@@ -92,6 +92,9 @@ pub fn kappa_rolling<'py>(
     let benchmark = gaussian_kappa_benchmark(window, n_sub, n_sims);
 
     let mut result = vec![f64::NAN; n];
+    if window == 0 {
+        return Ok((PyArray1::from_vec(py, result), benchmark));
+    }
     for i in (window - 1)..n {
         let slice = &data[(i + 1 - window)..=i];
         result[i] = compute_kappa(slice, n_sub);

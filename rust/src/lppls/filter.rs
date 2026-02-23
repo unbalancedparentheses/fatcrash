@@ -9,7 +9,6 @@ pub struct FilterConfig {
     pub omega_min: f64,
     pub omega_max: f64,
     pub max_damping: f64,
-    pub max_relative_error: f64,
 }
 
 impl Default for FilterConfig {
@@ -20,7 +19,6 @@ impl Default for FilterConfig {
             omega_min: 2.0,
             omega_max: 25.0,
             max_damping: 1.0,
-            max_relative_error: 0.05,
         }
     }
 }

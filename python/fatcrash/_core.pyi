@@ -34,6 +34,28 @@ def kappa_rolling(
     n_sims: int | None = 200,
 ) -> tuple[npt.NDArray[np.float64], float]: ...
 
+def pickands_estimator(
+    data: npt.NDArray[np.float64],
+    k: int | None = None,
+    use_abs: bool | None = True,
+) -> float: ...
+
+def pickands_rolling(
+    data: npt.NDArray[np.float64],
+    window: int,
+    k: int | None = None,
+    use_abs: bool | None = True,
+) -> npt.NDArray[np.float64]: ...
+
+def hurst_exponent(
+    data: npt.NDArray[np.float64],
+) -> float: ...
+
+def hurst_rolling(
+    data: npt.NDArray[np.float64],
+    window: int,
+) -> npt.NDArray[np.float64]: ...
+
 # EVT
 def gpd_fit(
     data: npt.NDArray[np.float64],
@@ -74,4 +96,18 @@ def multiscale_signals(
     signals_1d: npt.NDArray[np.float64],
     signals_3d: npt.NDArray[np.float64],
     signals_7d: npt.NDArray[np.float64],
+) -> npt.NDArray[np.float64]: ...
+
+# Bubble detection
+def gsadf_test(
+    data: npt.NDArray[np.float64],
+    min_window: int | None = None,
+    n_sims: int | None = 200,
+    seed: int | None = 42,
+) -> tuple[float, npt.NDArray[np.float64], tuple[float, float, float]]: ...
+
+def gsadf_rolling(
+    data: npt.NDArray[np.float64],
+    window: int,
+    min_window: int | None = None,
 ) -> npt.NDArray[np.float64]: ...

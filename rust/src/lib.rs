@@ -1,5 +1,6 @@
 use pyo3::prelude::*;
 
+mod bubble;
 mod evt;
 mod lppls;
 mod multiscale;
@@ -13,6 +14,10 @@ fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(tail::hill::hill_rolling, m)?)?;
     m.add_function(wrap_pyfunction!(tail::kappa::kappa_metric, m)?)?;
     m.add_function(wrap_pyfunction!(tail::kappa::kappa_rolling, m)?)?;
+    m.add_function(wrap_pyfunction!(tail::pickands::pickands_estimator, m)?)?;
+    m.add_function(wrap_pyfunction!(tail::pickands::pickands_rolling, m)?)?;
+    m.add_function(wrap_pyfunction!(tail::hurst::hurst_exponent, m)?)?;
+    m.add_function(wrap_pyfunction!(tail::hurst::hurst_rolling, m)?)?;
 
     // EVT
     m.add_function(wrap_pyfunction!(evt::gpd::gpd_fit, m)?)?;
@@ -25,6 +30,10 @@ fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
 
     // Multiscale
     m.add_function(wrap_pyfunction!(multiscale::multiscale_signals, m)?)?;
+
+    // Bubble detection
+    m.add_function(wrap_pyfunction!(bubble::gsadf::gsadf_test, m)?)?;
+    m.add_function(wrap_pyfunction!(bubble::gsadf::gsadf_rolling, m)?)?;
 
     // Utils
     m.add_function(wrap_pyfunction!(utils::log_returns, m)?)?;

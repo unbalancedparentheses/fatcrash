@@ -7,7 +7,7 @@ use pyo3::prelude::*;
 ///
 /// Includes Huisman et al. (2001) small-sample bias correction:
 ///   alpha_corrected = alpha * (1 - 1/k)
-fn hill_estimate(sorted_desc: &[f64], k: usize) -> f64 {
+pub(crate) fn hill_estimate(sorted_desc: &[f64], k: usize) -> f64 {
     if k == 0 || k >= sorted_desc.len() {
         return f64::NAN;
     }

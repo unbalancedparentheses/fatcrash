@@ -1,0 +1,47 @@
+[build-system]
+requires = ["maturin>=1.5,<2.0"]
+build-backend = "maturin"
+
+[project]
+name = "fatcrash"
+version = "0.1.0"
+description = "Crash detection via fat-tail statistics"
+requires-python = ">=3.11"
+dependencies = [
+    "numpy>=1.26",
+    "pandas>=2.1",
+    "polars>=0.20",
+    "pyarrow>=14.0",
+    "ccxt>=4.0",
+    "requests>=2.31",
+    "typer>=0.9",
+    "rich>=13.0",
+    "fastapi>=0.110",
+    "uvicorn>=0.27",
+    "plotly>=5.18",
+    "matplotlib>=3.8",
+    "scipy>=1.12",
+    "httpx>=0.27",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "jupyter>=1.0",
+    "ipykernel>=6.0",
+    "maturin>=1.5",
+]
+deep = [
+    "torch>=2.2",
+]
+
+[project.scripts]
+fatcrash = "fatcrash.cli.main:app"
+
+[tool.maturin]
+python-source = "python"
+module-name = "fatcrash._core"
+features = ["pyo3/extension-module"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests/python"]

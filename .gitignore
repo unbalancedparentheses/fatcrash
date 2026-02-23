@@ -1,0 +1,35 @@
+# Rust
+/target/
+Cargo.lock
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+*.so
+*.dylib
+
+# Maturin
+*.whl
+
+# Virtual env
+.venv/
+venv/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# Data
+data/cache/
+*.parquet
+
+# Jupyter
+.ipynb_checkpoints/
+
+# OS
+.DS_Store

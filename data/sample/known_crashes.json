@@ -1,0 +1,81 @@
+{
+  "crashes": [
+    {
+      "asset": "BTC",
+      "date": "2017-12-17",
+      "peak_price": 19783,
+      "trough_date": "2018-12-15",
+      "trough_price": 3236,
+      "drawdown_pct": -83.6,
+      "description": "2017 BTC bubble peak"
+    },
+    {
+      "asset": "BTC",
+      "date": "2021-04-14",
+      "peak_price": 64863,
+      "trough_date": "2021-07-20",
+      "trough_price": 29796,
+      "drawdown_pct": -54.1,
+      "description": "2021 May crash (China mining ban)"
+    },
+    {
+      "asset": "BTC",
+      "date": "2021-11-10",
+      "peak_price": 68789,
+      "trough_date": "2022-11-21",
+      "trough_price": 15760,
+      "drawdown_pct": -77.1,
+      "description": "2021-2022 bear market (Luna/FTX)"
+    },
+    {
+      "asset": "BTC",
+      "date": "2013-11-29",
+      "peak_price": 1132,
+      "trough_date": "2015-01-14",
+      "trough_price": 178,
+      "drawdown_pct": -84.3,
+      "description": "2013 Mt. Gox era bubble"
+    },
+    {
+      "asset": "SPX",
+      "date": "2020-02-19",
+      "peak_price": 3386,
+      "trough_date": "2020-03-23",
+      "trough_price": 2237,
+      "drawdown_pct": -33.9,
+      "description": "COVID-19 crash"
+    },
+    {
+      "asset": "SPX",
+      "date": "2007-10-09",
+      "peak_price": 1565,
+      "trough_date": "2009-03-09",
+      "trough_price": 676,
+      "drawdown_pct": -56.8,
+      "description": "2008 Financial Crisis"
+    },
+    {
+      "asset": "GOLD",
+      "date": "2011-09-06",
+      "peak_price": 1895,
+      "trough_date": "2015-12-03",
+      "trough_price": 1049,
+      "drawdown_pct": -44.6,
+      "description": "2011 gold bubble peak"
+    }
+  ],
+  "quiet_periods": [
+    {
+      "asset": "BTC",
+      "start": "2019-01-01",
+      "end": "2019-06-01",
+      "description": "2019 H1 — no major crash expected"
+    },
+    {
+      "asset": "BTC",
+      "start": "2023-07-01",
+      "end": "2023-12-31",
+      "description": "2023 H2 — recovery period"
+    }
+  ]
+}

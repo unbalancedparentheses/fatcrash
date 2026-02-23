@@ -235,7 +235,7 @@ def main():
 
     try:
         mw = pd.read_csv(
-            "/Users/unbalancedparen/projects/forex-centuries/data/measuringworth_exchange_rates.csv"
+            "/Users/unbalancedparen/projects/forex-centuries/data/sources/measuringworth/measuringworth_exchange_rates.csv"
         )
         for currency in [
             "United Kingdom",
@@ -273,7 +273,7 @@ def main():
     print("FRED DAILY FOREX: PICKANDS, HURST & GSADF")
     print("=" * 70)
 
-    fred_dir = "/Users/unbalancedparen/projects/forex-centuries/data/fred_daily"
+    fred_dir = "/Users/unbalancedparen/projects/forex-centuries/data/sources/fred/daily"
     fred_pairs = [
         "fred_aud_usd.csv", "fred_eur_usd.csv", "fred_gbp_usd.csv",
         "fred_jpy_usd.csv", "fred_cad_usd.csv", "fred_chf_usd.csv",
@@ -314,8 +314,10 @@ def main():
         h = hurst_exponent(ret)
         alpha = hill_estimator(ret)
 
+        # Subsample for GSADF (O(n^2) — use last 2000 points max)
+        gsadf_prices = prices[-2000:] if len(prices) > 2000 else prices
         gsadf_stat, _, (cv90, cv95, cv99) = gsadf_test(
-            prices, min_window=None, n_sims=200, seed=42
+            gsadf_prices, min_window=None, n_sims=30, seed=42
         )
         bubble = gsadf_stat > cv95
 
@@ -349,7 +351,7 @@ def main():
     print("CLIO INFRA YEARLY EXCHANGE RATES: PICKANDS & HURST (TOP 30)")
     print("=" * 70)
 
-    clio_path = "/Users/unbalancedparen/projects/forex-centuries/data/clio_infra_exchange_rates.csv"
+    clio_path = "/Users/unbalancedparen/projects/forex-centuries/data/sources/clio_infra/clio_infra_exchange_rates.csv"
     clio_results = []
     try:
         clio = pd.read_csv(clio_path)

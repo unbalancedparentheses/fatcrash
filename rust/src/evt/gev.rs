@@ -7,7 +7,6 @@ use pyo3::prelude::*;
 /// xi > 0: Frechet (fat tail)
 /// xi = 0: Gumbel (exponential tail)
 /// xi < 0: Weibull (bounded tail)
-
 /// GEV log-likelihood for a single observation.
 fn gev_log_pdf(x: f64, mu: f64, sigma: f64, xi: f64) -> f64 {
     if sigma <= 0.0 {

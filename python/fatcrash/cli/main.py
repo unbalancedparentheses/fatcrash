@@ -33,6 +33,8 @@ def _load_data(asset: str, source: str, days: int = 365, csv_path: str | None = 
 
     if source == "csv" and csv_path:
         return ingest.from_csv(csv_path)
+    elif source == "sample":
+        return ingest.from_sample(asset)
     elif source == "coingecko":
         coin_id = COINGECKO_MAP.get(asset.upper(), asset.lower())
         return ingest.from_coingecko(coin_id=coin_id, days=days)
@@ -42,7 +44,7 @@ def _load_data(asset: str, source: str, days: int = 365, csv_path: str | None = 
     elif source == "ccxt":
         return ingest.from_ccxt(symbol=f"{asset}/USDT", limit=days)
     else:
-        console.print(f"[red]Unknown source: {source}[/]")
+        console.print(f"[red]Unknown source: {source}. Use: yahoo, sample, coingecko, ccxt, csv[/]")
         raise typer.Exit(1)
 
 

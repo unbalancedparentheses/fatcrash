@@ -8,7 +8,6 @@ use super::model::{solve_linear, LpplsParams};
 /// Population-based stochastic search for LPPLS nonlinear parameters.
 /// Searches over (tc, m, omega) space, solving linear params via OLS at each point.
 /// Tracks both the best overall fit and the best filter-passing fit.
-
 struct SearchBounds {
     tc_min: f64,
     tc_max: f64,
@@ -126,6 +125,7 @@ fn search_lppls(
 
 /// Fit LPPLS model to log-price time series.
 /// Returns (tc, m, omega, a, b, c1, c2, rss) or raises error.
+#[allow(clippy::type_complexity)]
 #[pyfunction]
 #[pyo3(signature = (times, log_prices, tc_range=None, pop_size=50, n_generations=40, seed=42))]
 pub fn lppls_fit(

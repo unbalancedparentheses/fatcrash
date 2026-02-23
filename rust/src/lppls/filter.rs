@@ -2,7 +2,6 @@ use super::model::LpplsParams;
 
 /// Sornette qualifying filter for LPPLS fits.
 /// A fit must pass all constraints to be considered valid.
-
 pub struct FilterConfig {
     pub m_min: f64,
     pub m_max: f64,
@@ -53,7 +52,7 @@ pub fn passes_filter(params: &LpplsParams, config: &FilterConfig) -> bool {
 }
 
 /// Count number of oscillations in the fit window.
-pub fn count_oscillations(params: &LpplsParams, t_start: f64, t_end: f64) -> f64 {
+pub fn _count_oscillations(params: &LpplsParams, t_start: f64, t_end: f64) -> f64 {
     let dt_start = params.tc - t_start;
     let dt_end = params.tc - t_end;
     if dt_start <= 0.0 || dt_end <= 0.0 {

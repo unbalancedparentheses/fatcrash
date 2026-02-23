@@ -98,3 +98,76 @@ def from_yahoo(
     )
     df = df.set_index("date").sort_index()
     return df
+
+
+def from_fred(
+    series: str | list[str],
+    start: str = "2007-01-01",
+    end: str | None = None,
+) -> pd.DataFrame:
+    """Fetch macro data from FRED (Federal Reserve Economic Data).
+
+    Common series IDs:
+        VIXCLS          - VIX (CBOE Volatility Index)
+        T10Y2Y          - 10Y-2Y yield curve spread
+        BAMLH0A0HYM2    - High yield spread
+        DTWEXBGS        - Trade-weighted US Dollar Index
+        GDP             - US GDP (quarterly)
+        DGS10           - 10-Year Treasury yield
+        CPIAUCSL        - CPI (inflation)
+        UNRATE          - Unemployment rate
+    """
+    import httpx
+
+    if end is None:
+        end = pd.Timestamp.now().strftime("%Y-%m-%d")
+
+    if isinstance(series, str):
+        series = [series]
+
+    frames = {}
+    for sid in series:
+        url = "https://fred.stlouisfed.org/graph/fredgraph.csv"
+        params = {"id": sid, "cosd": start, "coed": end}
+        resp = httpx.get(url, params=params, headers={"User-Agent": "fatcrash/0.1"}, timeout=30)
+        resp.raise_for_status()
+
+        from io import StringIO
+        df = pd.read_csv(StringIO(resp.text), parse_dates=["DATE"])
+        df = df.rename(columns={"DATE": "date"})
+        df = df.set_index("date")
+        col = [c for c in df.columns if c != "date"][0]
+        df[col] = pd.to_numeric(df[col], errors="coerce")
+        frames[sid] = df[col].rename(sid.lower())
+
+    result = pd.concat(frames.values(), axis=1)
+    return result.sort_index()
+
+
+def from_sample(asset: str = "btc") -> pd.DataFrame:
+    """Load bundled sample data (no internet needed).
+
+    Available: btc, spy, gold, signals
+    """
+    sample_dir = Path(__file__).parent.parent.parent.parent / "data" / "sample"
+
+    files = {
+        "btc": "btc_daily.csv",
+        "bitcoin": "btc_daily.csv",
+        "spy": "spy_daily.csv",
+        "spx": "spy_daily.csv",
+        "sp500": "spy_daily.csv",
+        "gold": "gold_daily.csv",
+        "signals": "macro_signals.csv",
+    }
+
+    key = asset.lower()
+    if key not in files:
+        available = ", ".join(sorted(set(files.values())))
+        raise ValueError(f"Unknown asset '{asset}'. Available: {available}")
+
+    path = sample_dir / files[key]
+    if not path.exists():
+        raise FileNotFoundError(f"Sample data not found: {path}")
+
+    return from_csv(path)

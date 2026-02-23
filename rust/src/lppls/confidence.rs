@@ -8,7 +8,6 @@ use super::model::solve_linear;
 /// DS LPPLS confidence indicator.
 /// For each anchor date t2, fit LPPLS over many (t1, t2) windows.
 /// Confidence = fraction of fits that pass the Sornette filter.
-
 fn fit_single_window(
     times: &[f64],
     log_prices: &[f64],

@@ -6,7 +6,6 @@ use pyo3::prelude::*;
 /// F(x) = 1 - exp(-x/sigma)               for xi = 0
 ///
 /// Used for modeling exceedances over a threshold.
-
 /// GPD log-likelihood for a single exceedance.
 fn gpd_log_pdf(x: f64, sigma: f64, xi: f64) -> f64 {
     if sigma <= 0.0 || x < 0.0 {
@@ -183,6 +182,36 @@ pub fn gpd_var_es(
 mod tests {
     use super::*;
 
+    fn gpd_var_es_internal(data: &[f64], p: f64, quantile: f64) -> (f64, f64) {
+        let losses: Vec<f64> = data.iter().map(|x| -x).filter(|x| *x > 0.0).collect();
+        let n = losses.len() as f64;
+        let threshold = select_threshold(&losses, quantile);
+        let exceedances: Vec<f64> = losses
+            .iter()
+            .filter(|&&x| x > threshold)
+            .map(|&x| x - threshold)
+            .collect();
+        let n_exc = exceedances.len() as f64;
+        let (sigma, xi) = gpd_mle(&exceedances);
+        let rate = n_exc / n;
+
+        let var = if xi.abs() < 1e-8 {
+            threshold - sigma * (rate / (1.0 - p)).ln()
+        } else {
+            threshold + sigma / xi * (((1.0 - p) * rate).powf(-xi) - 1.0)
+        };
+
+        let es = if xi.abs() < 1e-8 {
+            var + sigma
+        } else if xi < 1.0 {
+            (var + sigma - xi * threshold) / (1.0 - xi)
+        } else {
+            f64::INFINITY
+        };
+
+        (var, es)
+    }
+
     #[test]
     fn test_gpd_exponential() {
         use rand::prelude::*;
@@ -228,33 +257,3 @@ mod tests {
     }
 }
 
-// Internal helper for testing without PyO3
-fn gpd_var_es_internal(data: &[f64], p: f64, quantile: f64) -> (f64, f64) {
-    let losses: Vec<f64> = data.iter().map(|x| -x).filter(|x| *x > 0.0).collect();
-    let n = losses.len() as f64;
-    let threshold = select_threshold(&losses, quantile);
-    let exceedances: Vec<f64> = losses
-        .iter()
-        .filter(|&&x| x > threshold)
-        .map(|&x| x - threshold)
-        .collect();
-    let n_exc = exceedances.len() as f64;
-    let (sigma, xi) = gpd_mle(&exceedances);
-    let rate = n_exc / n;
-
-    let var = if xi.abs() < 1e-8 {
-        threshold - sigma * (rate / (1.0 - p)).ln()
-    } else {
-        threshold + sigma / xi * (((1.0 - p) * rate).powf(-xi) - 1.0)
-    };
-
-    let es = if xi.abs() < 1e-8 {
-        var + sigma
-    } else if xi < 1.0 {
-        (var + sigma - xi * threshold) / (1.0 - xi)
-    } else {
-        f64::INFINITY
-    };
-
-    (var, es)
-}

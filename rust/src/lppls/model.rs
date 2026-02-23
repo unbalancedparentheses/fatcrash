@@ -26,13 +26,13 @@ impl LpplsParams {
     }
 
     /// Phase of oscillation
-    pub fn phi(&self) -> f64 {
+    pub fn _phi(&self) -> f64 {
         self.c2.atan2(self.c1)
     }
 }
 
 /// Compute LPPLS value at time t given parameters.
-pub fn lppls_value(t: f64, p: &LpplsParams) -> f64 {
+pub fn _lppls_value(t: f64, p: &LpplsParams) -> f64 {
     let dt = p.tc - t;
     if dt <= 0.0 {
         return f64::NAN;
@@ -120,13 +120,13 @@ mod tests {
 
         // Generate synthetic LPPLS data
         let times: Vec<f64> = (0..80).map(|t| t as f64).collect();
-        let log_prices: Vec<f64> = times.iter().map(|&t| lppls_value(t, &params)).collect();
+        let log_prices: Vec<f64> = times.iter().map(|&t| _lppls_value(t, &params)).collect();
 
         // Recover linear params given true nonlinear params
         let result = solve_linear(&times, &log_prices, params.tc, params.m, params.omega);
         assert!(result.is_some());
 
-        let (a, b, c1, c2, rss) = result.unwrap();
+        let (a, b, _c1, _c2, rss) = result.unwrap();
         assert!((a - params.a).abs() < 1e-6, "a: {}", a);
         assert!((b - params.b).abs() < 1e-6, "b: {}", b);
         assert!(rss < 1e-10, "rss should be near zero: {}", rss);

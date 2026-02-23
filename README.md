@@ -2,7 +2,7 @@
 
 Crash detection via fat-tail statistics. Works with any asset: Bitcoin, gold, S&P 500, forex, etc.
 
-Python + Rust (PyO3) — performance-critical numerical work in Rust, everything else in Python. 8 methods, 99 tests, tested on 500 years of data across 138 countries.
+Python + Rust (PyO3) — performance-critical numerical work in Rust, everything else in Python. 8 methods, 112 tests, tested on 500 years of data across 138 countries.
 
 ## Motivation
 
@@ -10,7 +10,7 @@ Python + Rust (PyO3) — performance-critical numerical work in Rust, everything
 
 Classical financial theory evaluates gambles by their expected value — the ensemble average over all possible outcomes at a single point in time. Peters (2019) demonstrated that this is the wrong quantity for a single agent who must live through outcomes sequentially. In a multiplicative process such as investing, the time-average growth rate and the ensemble-average growth rate are not equal. The process is non-ergodic.
 
-Consider a gamble that pays +50% or -40% with equal probability. The ensemble average yields +5% per round. The time-average growth rate is log(1.5 × 0.6)/2 = -5.3% per round. Over a sufficient number of rounds, a single participant goes bankrupt with probability 1, despite the positive expected value. This is not a paradox — it is a consequence of the multiplicative dynamics that govern wealth.
+Consider a gamble that pays +50% or -40% with equal probability. The ensemble average yields +5% per round. The time-average growth rate is log(1.5 * 0.6) / 2 = -5.3% per round. Over a sufficient number of rounds, a single participant goes bankrupt with probability 1, despite the positive expected value. This is not a paradox — it is a consequence of the multiplicative dynamics that govern wealth.
 
 The divergence between ensemble and time averages is amplified by fat tails. When the tail index alpha < 2 (infinite variance), the ensemble average is dominated by rare, extreme outcomes that no individual trajectory is likely to realize. Under such distributions, the sample mean does not converge to the population mean at the rate prescribed by the Central Limit Theorem. Taleb (2020) quantifies this through the kappa metric: for alpha near 1 (Cauchy-like), the CLT effectively does not operate at any practical sample size.
 
@@ -23,16 +23,6 @@ Standard risk metrics — Value at Risk under normality, Sharpe ratios, CAPM bet
 3. Returns are ergodic (the ensemble average equals the time average)
 
 Our empirical results show that 71% of countries have exchange rate distributions with alpha < 2 (infinite variance), and 97% have alpha < 4 (infinite kurtosis). For the majority of financial instruments, all three presuppositions are violated.
-
-### What fatcrash measures
-
-The methods implemented here target quantities relevant to the time-average investor:
-
-1. **Tail index estimation** (Hill, Pickands, Taleb kappa, max-stability kappa) — characterizes the severity of the ensemble/time-average divergence
-2. **Bubble detection** (LPPLS, GSADF, Deep LPPLS) — identifies super-exponential growth regimes that precede multiplicative ruin events
-3. **Long-range dependence** (Hurst exponent) — detects persistent dynamics that amplify tail risk
-4. **Extreme value quantification** (GPD, GEV) — estimates tail risk directly from the empirical distribution of extremes
-5. **Multiscale analysis** — filters false positives by requiring signal agreement across multiple observation frequencies
 
 ## The Methods
 
@@ -219,7 +209,7 @@ Exchange/CSV/FRED -> ingest.py -> transforms.py -> [log_prices, log_returns]
                     v          v          v              v
                LPPLS(Rust) EVT(Rust) Tail(Rust)   DeepLPPLS(Torch)
                GSADF(Rust)           Pickands      Hurst
-               tc, conf    VaR, ES   Hill,Kappa    H exponent
+               tc, conf    VaR, ES   Hill,Kappas   H exponent
                     |          |          |              |
                     +----------+----------+------+------+
                                                  v
@@ -276,7 +266,7 @@ make setup
 # Build (compiles Rust, installs Python package)
 make build
 
-# Run all tests (20 Rust + 79 Python = 99 total)
+# Run all tests (20 Rust + 92 Python = 112 total)
 make test
 
 # Lint (zero clippy warnings)

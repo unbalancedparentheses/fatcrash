@@ -16,6 +16,16 @@ from fatcrash._core import (
     lppls_fit,
     log_returns,
     log_prices,
+    dfa_exponent,
+    dfa_rolling,
+    deh_estimator,
+    deh_rolling,
+    qq_estimator,
+    qq_rolling,
+    maxsum_ratio,
+    maxsum_rolling,
+    spectral_exponent,
+    spectral_rolling,
 )
 
 
@@ -115,6 +125,115 @@ class TestEVT:
         data = -np.log(-np.log(rng.uniform(0, 1, 500)))
         mu, sigma, xi = gev_fit(data)
         assert sigma > 0
+
+
+class TestDFA:
+    def test_white_noise(self):
+        rng = np.random.default_rng(42)
+        data = rng.standard_normal(2000)
+        alpha = dfa_exponent(data)
+        assert abs(alpha - 0.5) < 0.2, f"DFA for white noise should be ~0.5, got {alpha}"
+
+    def test_persistent(self):
+        rng = np.random.default_rng(42)
+        data = np.cumsum(rng.standard_normal(2000))
+        alpha = dfa_exponent(data)
+        assert alpha > 0.8, f"DFA for random walk should be > 0.8, got {alpha}"
+
+    def test_rolling(self):
+        rng = np.random.default_rng(42)
+        data = rng.standard_normal(500)
+        result = dfa_rolling(data, window=100)
+        assert len(result) == 500
+        assert np.isnan(result[0])
+        valid = result[~np.isnan(result)]
+        assert len(valid) > 0
+
+
+class TestDEH:
+    def test_pareto(self):
+        rng = np.random.default_rng(42)
+        u = rng.uniform(0, 1, 5000)
+        samples = u ** (-1 / 2.0)  # Pareto alpha=2 → gamma=0.5
+        gamma = deh_estimator(samples, k=70)
+        assert gamma > 0, f"DEH gamma should be positive for Pareto, got {gamma}"
+
+    def test_rolling(self):
+        rng = np.random.default_rng(42)
+        data = rng.standard_normal(500)
+        result = deh_rolling(data, window=100)
+        assert len(result) == 500
+        assert np.isnan(result[0])
+        valid = result[~np.isnan(result)]
+        assert len(valid) > 0
+
+
+class TestQQ:
+    def test_pareto(self):
+        rng = np.random.default_rng(42)
+        u = rng.uniform(0, 1, 5000)
+        samples = u ** (-1 / 3.0)  # Pareto alpha=3
+        alpha = qq_estimator(samples, k=70)
+        assert 1.0 < alpha < 6.0, f"QQ alpha for Pareto(3) should be near 3, got {alpha}"
+
+    def test_rolling(self):
+        rng = np.random.default_rng(42)
+        data = rng.standard_normal(500)
+        result = qq_rolling(data, window=100)
+        assert len(result) == 500
+        assert np.isnan(result[0])
+        valid = result[~np.isnan(result)]
+        assert len(valid) > 0
+
+
+class TestMaxSum:
+    def test_gaussian_low_ratio(self):
+        rng = np.random.default_rng(42)
+        data = rng.standard_normal(5000)
+        r = maxsum_ratio(data)
+        assert r < 0.05, f"Gaussian max/sum should be small, got {r}"
+
+    def test_cauchy_higher_than_gaussian(self):
+        rng = np.random.default_rng(42)
+        gauss = rng.standard_normal(5000)
+        cauchy = rng.standard_cauchy(5000)
+        r_gauss = maxsum_ratio(gauss)
+        r_cauchy = maxsum_ratio(cauchy)
+        assert r_cauchy > r_gauss, (
+            f"Cauchy ratio ({r_cauchy}) should > Gaussian ratio ({r_gauss})"
+        )
+
+    def test_rolling(self):
+        rng = np.random.default_rng(42)
+        data = rng.standard_normal(500)
+        result = maxsum_rolling(data, window=100)
+        assert len(result) == 500
+        assert np.isnan(result[0])
+        valid = result[~np.isnan(result)]
+        assert len(valid) > 0
+
+
+class TestSpectral:
+    def test_white_noise(self):
+        rng = np.random.default_rng(42)
+        data = rng.standard_normal(2000)
+        d = spectral_exponent(data)
+        assert abs(d) < 0.3, f"Spectral d for white noise should be ~0, got {d}"
+
+    def test_persistent(self):
+        rng = np.random.default_rng(42)
+        data = np.cumsum(rng.standard_normal(2000))
+        d = spectral_exponent(data)
+        assert d > 0.3, f"Spectral d for random walk should be > 0.3, got {d}"
+
+    def test_rolling(self):
+        rng = np.random.default_rng(42)
+        data = rng.standard_normal(500)
+        result = spectral_rolling(data, window=100)
+        assert len(result) == 500
+        assert np.isnan(result[0])
+        valid = result[~np.isnan(result)]
+        assert len(valid) > 0
 
 
 class TestLPPLS:

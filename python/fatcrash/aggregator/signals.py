@@ -27,23 +27,28 @@ class CrashSignal:
             return "LOW"
 
 
-# Updated weights including all 7 methods
+# Updated weights including all 13 methods
 DEFAULT_WEIGHTS = {
     # Bubble detectors (highest weight — best accuracy)
-    "lppls_confidence": 0.20,
-    "lppls_tc_proximity": 0.10,
-    "gsadf_bubble": 0.15,
+    "lppls_confidence": 0.18,
+    "lppls_tc_proximity": 0.08,
+    "gsadf_bubble": 0.12,
     # Tail estimators
-    "gpd_var_exceedance": 0.10,
-    "kappa_regime": 0.08,
-    "taleb_kappa": 0.07,
-    "hill_thinning": 0.05,
-    "pickands_thinning": 0.05,
+    "gpd_var_exceedance": 0.08,
+    "kappa_regime": 0.06,
+    "taleb_kappa": 0.05,
+    "hill_thinning": 0.04,
+    "pickands_thinning": 0.04,
+    "deh_thinning": 0.03,
+    "qq_thinning": 0.03,
+    "maxsum_signal": 0.04,
     # Regime
-    "hurst_trending": 0.05,
+    "hurst_trending": 0.04,
+    "dfa_trending": 0.03,
+    "spectral_memory": 0.03,
     # Other
-    "deep_lppls": 0.10,
-    "multiscale": 0.10,
+    "deep_lppls": 0.08,
+    "multiscale": 0.07,
 }
 
 
@@ -79,8 +84,9 @@ def aggregate_signals(
     # Count how many independent method categories have elevated signals
     categories = {
         "bubble": ["lppls_confidence", "gsadf_bubble", "deep_lppls"],
-        "tail": ["kappa_regime", "taleb_kappa", "hill_thinning", "pickands_thinning", "gpd_var_exceedance"],
-        "regime": ["hurst_trending"],
+        "tail": ["kappa_regime", "taleb_kappa", "hill_thinning", "pickands_thinning",
+                 "gpd_var_exceedance", "deh_thinning", "qq_thinning", "maxsum_signal"],
+        "regime": ["hurst_trending", "dfa_trending", "spectral_memory"],
         "structure": ["multiscale", "lppls_tc_proximity"],
     }
 
@@ -197,3 +203,52 @@ def hurst_signal(h: float) -> float:
     if h <= 0.55:
         return 0.0
     return np.clip((h - 0.55) / 0.3, 0.0, 1.0)
+
+
+def dfa_signal(alpha: float) -> float:
+    """Signal from DFA exponent. alpha > 0.5 = persistent dynamics."""
+    if np.isnan(alpha):
+        return 0.0
+    if alpha <= 0.55:
+        return 0.0
+    return np.clip((alpha - 0.55) / 0.3, 0.0, 1.0)
+
+
+def deh_signal(gamma: float, gamma_prev: float) -> float:
+    """Signal from increasing DEH gamma (thickening tails)."""
+    if np.isnan(gamma) or np.isnan(gamma_prev):
+        return 0.0
+    if gamma_prev == 0:
+        return 0.0
+    change = (gamma - gamma_prev) / abs(gamma_prev)
+    return np.clip(change, 0.0, 1.0)
+
+
+def qq_signal(alpha: float, alpha_prev: float) -> float:
+    """Signal from declining QQ alpha (thickening tails)."""
+    if np.isnan(alpha) or np.isnan(alpha_prev):
+        return 0.0
+    if alpha_prev <= 0:
+        return 0.0
+    change = (alpha_prev - alpha) / alpha_prev
+    return np.clip(change, 0.0, 1.0)
+
+
+def maxsum_signal(ratio: float) -> float:
+    """Signal from max-to-sum ratio. High ratio = infinite variance.
+
+    For Gaussian, R_n ~ 0.01; for alpha < 2, R_n ~ 0.05+.
+    """
+    if np.isnan(ratio):
+        return 0.0
+    # Scale: 0.02 baseline, 0.10 = full signal
+    return np.clip((ratio - 0.02) / 0.08, 0.0, 1.0)
+
+
+def spectral_signal(d: float) -> float:
+    """Signal from spectral exponent. d > 0 = long memory."""
+    if np.isnan(d):
+        return 0.0
+    if d <= 0.05:
+        return 0.0
+    return np.clip((d - 0.05) / 0.4, 0.0, 1.0)

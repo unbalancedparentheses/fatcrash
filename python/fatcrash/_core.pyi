@@ -71,6 +71,61 @@ def hurst_rolling(
     window: int,
 ) -> npt.NDArray[np.float64]: ...
 
+def dfa_exponent(
+    data: npt.NDArray[np.float64],
+) -> float: ...
+
+def dfa_rolling(
+    data: npt.NDArray[np.float64],
+    window: int,
+) -> npt.NDArray[np.float64]: ...
+
+def deh_estimator(
+    data: npt.NDArray[np.float64],
+    k: int | None = None,
+    use_abs: bool | None = True,
+) -> float: ...
+
+def deh_rolling(
+    data: npt.NDArray[np.float64],
+    window: int,
+    k: int | None = None,
+    use_abs: bool | None = True,
+) -> npt.NDArray[np.float64]: ...
+
+def qq_estimator(
+    data: npt.NDArray[np.float64],
+    k: int | None = None,
+    use_abs: bool | None = True,
+) -> float: ...
+
+def qq_rolling(
+    data: npt.NDArray[np.float64],
+    window: int,
+    k: int | None = None,
+    use_abs: bool | None = True,
+) -> npt.NDArray[np.float64]: ...
+
+def maxsum_ratio(
+    data: npt.NDArray[np.float64],
+) -> float: ...
+
+def maxsum_rolling(
+    data: npt.NDArray[np.float64],
+    window: int,
+) -> npt.NDArray[np.float64]: ...
+
+def spectral_exponent(
+    data: npt.NDArray[np.float64],
+    bandwidth_exp: float | None = 0.65,
+) -> float: ...
+
+def spectral_rolling(
+    data: npt.NDArray[np.float64],
+    window: int,
+    bandwidth_exp: float | None = 0.65,
+) -> npt.NDArray[np.float64]: ...
+
 # EVT
 def gpd_fit(
     data: npt.NDArray[np.float64],

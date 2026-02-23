@@ -20,6 +20,16 @@ fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(tail::pickands::pickands_rolling, m)?)?;
     m.add_function(wrap_pyfunction!(tail::hurst::hurst_exponent, m)?)?;
     m.add_function(wrap_pyfunction!(tail::hurst::hurst_rolling, m)?)?;
+    m.add_function(wrap_pyfunction!(tail::dfa::dfa_exponent, m)?)?;
+    m.add_function(wrap_pyfunction!(tail::dfa::dfa_rolling, m)?)?;
+    m.add_function(wrap_pyfunction!(tail::deh::deh_estimator, m)?)?;
+    m.add_function(wrap_pyfunction!(tail::deh::deh_rolling, m)?)?;
+    m.add_function(wrap_pyfunction!(tail::qq::qq_estimator, m)?)?;
+    m.add_function(wrap_pyfunction!(tail::qq::qq_rolling, m)?)?;
+    m.add_function(wrap_pyfunction!(tail::maxsum::maxsum_ratio, m)?)?;
+    m.add_function(wrap_pyfunction!(tail::maxsum::maxsum_rolling, m)?)?;
+    m.add_function(wrap_pyfunction!(tail::spectral::spectral_exponent, m)?)?;
+    m.add_function(wrap_pyfunction!(tail::spectral::spectral_rolling, m)?)?;
 
     // EVT
     m.add_function(wrap_pyfunction!(evt::gpd::gpd_fit, m)?)?;

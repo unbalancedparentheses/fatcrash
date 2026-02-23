@@ -22,6 +22,16 @@ from fatcrash._core import (
     lppls_fit,
     log_returns as rust_log_returns,
     log_prices as rust_log_prices,
+    dfa_exponent,
+    dfa_rolling,
+    deh_estimator,
+    deh_rolling,
+    qq_estimator,
+    qq_rolling,
+    maxsum_ratio,
+    maxsum_rolling,
+    spectral_exponent,
+    spectral_rolling,
 )
 from fatcrash.data.transforms import log_returns, log_prices, time_index, block_maxima
 
@@ -169,6 +179,109 @@ class TestLPPLSAcrossAssets:
         assert not np.isnan(tc), f"{asset_name}: tc is NaN"
         assert 0.0 < m < 1.0, f"{asset_name}: m out of range: {m}"
         assert rss >= 0, f"{asset_name}: RSS negative"
+
+
+class TestDFAAcrossAssets:
+    """DFA should work on all assets."""
+
+    @pytest.mark.parametrize("asset_name", ["btc", "spy", "gold"])
+    def test_dfa_runs(self, asset_name):
+        df = load_asset(asset_name)
+        returns = log_returns(df)
+        alpha = dfa_exponent(returns)
+        assert not np.isnan(alpha), f"{asset_name}: DFA alpha is NaN"
+        assert alpha > 0, f"{asset_name}: DFA alpha should be positive, got {alpha}"
+
+    @pytest.mark.parametrize("asset_name", ["btc", "spy", "gold"])
+    def test_dfa_rolling_no_crash(self, asset_name):
+        df = load_asset(asset_name)
+        returns = log_returns(df)
+        result = dfa_rolling(returns, window=252)
+        assert len(result) == len(returns)
+        valid = result[~np.isnan(result)]
+        assert len(valid) > 0, f"{asset_name}: all rolling DFA values are NaN"
+
+
+class TestDEHAcrossAssets:
+    """DEH should work on all assets."""
+
+    @pytest.mark.parametrize("asset_name", ["btc", "spy", "gold"])
+    def test_deh_runs(self, asset_name):
+        df = load_asset(asset_name)
+        returns = log_returns(df)
+        gamma = deh_estimator(returns)
+        assert not np.isnan(gamma), f"{asset_name}: DEH gamma is NaN"
+
+    @pytest.mark.parametrize("asset_name", ["btc", "spy", "gold"])
+    def test_deh_rolling_no_crash(self, asset_name):
+        df = load_asset(asset_name)
+        returns = log_returns(df)
+        result = deh_rolling(returns, window=252)
+        assert len(result) == len(returns)
+        valid = result[~np.isnan(result)]
+        assert len(valid) > 0, f"{asset_name}: all rolling DEH values are NaN"
+
+
+class TestQQAcrossAssets:
+    """QQ estimator should work on all assets."""
+
+    @pytest.mark.parametrize("asset_name", ["btc", "spy", "gold"])
+    def test_qq_runs(self, asset_name):
+        df = load_asset(asset_name)
+        returns = log_returns(df)
+        alpha = qq_estimator(returns)
+        assert not np.isnan(alpha), f"{asset_name}: QQ alpha is NaN"
+        assert alpha > 0, f"{asset_name}: QQ alpha should be positive, got {alpha}"
+
+    @pytest.mark.parametrize("asset_name", ["btc", "spy", "gold"])
+    def test_qq_rolling_no_crash(self, asset_name):
+        df = load_asset(asset_name)
+        returns = log_returns(df)
+        result = qq_rolling(returns, window=252)
+        assert len(result) == len(returns)
+        valid = result[~np.isnan(result)]
+        assert len(valid) > 0, f"{asset_name}: all rolling QQ values are NaN"
+
+
+class TestMaxSumAcrossAssets:
+    """Max-to-sum ratio should work on all assets."""
+
+    @pytest.mark.parametrize("asset_name", ["btc", "spy", "gold"])
+    def test_maxsum_runs(self, asset_name):
+        df = load_asset(asset_name)
+        returns = log_returns(df)
+        r = maxsum_ratio(returns)
+        assert not np.isnan(r), f"{asset_name}: max/sum ratio is NaN"
+        assert 0 < r < 1, f"{asset_name}: max/sum ratio should be in (0,1), got {r}"
+
+    @pytest.mark.parametrize("asset_name", ["btc", "spy", "gold"])
+    def test_maxsum_rolling_no_crash(self, asset_name):
+        df = load_asset(asset_name)
+        returns = log_returns(df)
+        result = maxsum_rolling(returns, window=252)
+        assert len(result) == len(returns)
+        valid = result[~np.isnan(result)]
+        assert len(valid) > 0, f"{asset_name}: all rolling max/sum values are NaN"
+
+
+class TestSpectralAcrossAssets:
+    """Spectral exponent should work on all assets."""
+
+    @pytest.mark.parametrize("asset_name", ["btc", "spy", "gold"])
+    def test_spectral_runs(self, asset_name):
+        df = load_asset(asset_name)
+        returns = log_returns(df)
+        d = spectral_exponent(returns)
+        assert not np.isnan(d), f"{asset_name}: spectral d is NaN"
+
+    @pytest.mark.parametrize("asset_name", ["btc", "spy", "gold"])
+    def test_spectral_rolling_no_crash(self, asset_name):
+        df = load_asset(asset_name)
+        returns = log_returns(df)
+        result = spectral_rolling(returns, window=252)
+        assert len(result) == len(returns)
+        valid = result[~np.isnan(result)]
+        assert len(valid) > 0, f"{asset_name}: all rolling spectral values are NaN"
 
 
 # ═══════════════════════════════════════════
@@ -352,6 +465,34 @@ class TestForex:
         assert sigma > 0
         assert n_exc > 50  # Should have plenty of exceedances with 13k+ days
 
+    def test_dfa_on_forex(self, gbpusd):
+        returns = log_returns(gbpusd)
+        alpha = dfa_exponent(returns)
+        assert not np.isnan(alpha)
+        assert alpha > 0
+
+    def test_deh_on_forex(self, gbpusd):
+        returns = log_returns(gbpusd)
+        gamma = deh_estimator(returns)
+        assert not np.isnan(gamma)
+
+    def test_qq_on_forex(self, gbpusd):
+        returns = log_returns(gbpusd)
+        alpha = qq_estimator(returns)
+        assert not np.isnan(alpha)
+        assert alpha > 0
+
+    def test_maxsum_on_forex(self, gbpusd):
+        returns = log_returns(gbpusd)
+        r = maxsum_ratio(returns)
+        assert not np.isnan(r)
+        assert 0 < r < 1
+
+    def test_spectral_on_forex(self, gbpusd):
+        returns = log_returns(gbpusd)
+        d = spectral_exponent(returns)
+        assert not np.isnan(d)
+
 
 # ═══════════════════════════════════════════
 # Consistency: Rust vs Python implementations
@@ -431,3 +572,39 @@ class TestEdgeCases:
         var_99, _ = gpd_var_es(returns, p=0.99)
         var_995, _ = gpd_var_es(returns, p=0.995)
         assert var_995 > var_99, f"VaR 99.5% ({var_995}) should > VaR 99% ({var_99})"
+
+    def test_dfa_on_gaussian(self):
+        """DFA alpha for Gaussian should be near 0.5."""
+        rng = np.random.default_rng(42)
+        data = rng.standard_normal(4000)
+        alpha = dfa_exponent(data)
+        assert abs(alpha - 0.5) < 0.15, f"DFA for Gaussian should be ~0.5, got {alpha}"
+
+    def test_deh_on_pareto(self):
+        """DEH gamma for Pareto(2) should be positive."""
+        rng = np.random.default_rng(42)
+        u = rng.uniform(0, 1, 5000)
+        samples = u ** (-1 / 2.0)
+        gamma = deh_estimator(samples)
+        assert gamma > 0, f"DEH gamma for Pareto should be > 0, got {gamma}"
+
+    def test_qq_on_gaussian(self):
+        """QQ alpha for Gaussian should be high (thin tails)."""
+        rng = np.random.default_rng(42)
+        data = rng.standard_normal(5000)
+        alpha = qq_estimator(data)
+        assert alpha > 2.0, f"QQ alpha for Gaussian should be high, got {alpha}"
+
+    def test_maxsum_on_gaussian_vs_cauchy(self):
+        """Max/sum for Cauchy should be higher than Gaussian."""
+        rng = np.random.default_rng(42)
+        gauss = rng.standard_normal(5000)
+        cauchy = rng.standard_cauchy(5000)
+        assert maxsum_ratio(cauchy) > maxsum_ratio(gauss)
+
+    def test_spectral_on_gaussian(self):
+        """Spectral d for white noise should be near 0."""
+        rng = np.random.default_rng(42)
+        data = rng.standard_normal(4000)
+        d = spectral_exponent(data)
+        assert abs(d) < 0.3, f"Spectral d for white noise should be ~0, got {d}"

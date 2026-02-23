@@ -9,7 +9,7 @@ from fatcrash.data.ingest import from_sample, from_csv
 from fatcrash.data.transforms import log_returns, log_prices, time_index, block_maxima
 from fatcrash._core import (
     hill_estimator, hill_rolling, kappa_metric, kappa_rolling, gpd_var_es, lppls_fit,
-    pickands_estimator, hurst_exponent, gsadf_test,
+    pickands_estimator, hurst_exponent, gsadf_test, taleb_kappa,
 )
 
 
@@ -78,6 +78,34 @@ def test_method_on_drawdown(df, peak_idx, window=120):
     base_ratio = base_k / base_b if base_b > 0 else 1.0
     results["kappa"] = pre_ratio < base_ratio
 
+    # Taleb kappa
+    try:
+        pre_tk, pre_tb = taleb_kappa(pre_ret, n0=15, n1=50, n_sims=100)
+        base_tk, base_tb = taleb_kappa(base_ret, n0=15, n1=50, n_sims=100)
+        # Higher taleb kappa = fatter tails; detected if pre-crash kappa exceeds baseline
+        if not (np.isnan(pre_tk) or np.isnan(base_tk)):
+            results["taleb_kappa"] = pre_tk > base_tk
+        else:
+            results["taleb_kappa"] = None
+    except Exception:
+        results["taleb_kappa"] = None
+
+    # Pickands
+    pre_xi = pickands_estimator(pre_ret)
+    base_xi = pickands_estimator(base_ret)
+    if not (np.isnan(pre_xi) or np.isnan(base_xi)):
+        results["pickands"] = pre_xi > base_xi
+    else:
+        results["pickands"] = None
+
+    # Hurst
+    pre_h = hurst_exponent(pre_ret)
+    base_h = hurst_exponent(base_ret)
+    if not (np.isnan(pre_h) or np.isnan(base_h)):
+        results["hurst"] = pre_h > 0.55
+    else:
+        results["hurst"] = None
+
     # GPD VaR
     try:
         pre_var, _ = gpd_var_es(pre_ret, p=0.95, quantile=0.80)
@@ -94,6 +122,17 @@ def test_method_on_drawdown(df, peak_idx, window=120):
         results["lppls"] = (0.1 <= m <= 0.9) and (2.0 <= omega <= 25.0) and (b < 0)
     except Exception:
         results["lppls"] = None
+
+    # GSADF
+    try:
+        pre_prices = df.iloc[pre_start:pre_end]["close"].values
+        if len(pre_prices) >= 50:
+            gsadf_stat, _, (_, cv95, _) = gsadf_test(pre_prices, min_window=None, n_sims=30, seed=42)
+            results["gsadf"] = gsadf_stat > cv95
+        else:
+            results["gsadf"] = None
+    except Exception:
+        results["gsadf"] = None
 
     return results
 
@@ -135,7 +174,7 @@ def main():
     print("ACCURACY BY METHOD AND CRASH SIZE")
     print("=" * 70)
 
-    for method in ["hill", "kappa", "gpd_var", "lppls"]:
+    for method in ["lppls", "gsadf", "hurst", "kappa", "taleb_kappa", "pickands", "gpd_var", "hill"]:
         print(f"\n  {method.upper()}")
         subset = rdf[rdf["method"] == method]
         for size in ["SMALL", "MEDIUM", "MAJOR"]:

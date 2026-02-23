@@ -1,4 +1,4 @@
-"""Signal aggregation: combine indicators into crash probability."""
+"""Signal aggregation: combine all indicators into crash probability."""
 
 from __future__ import annotations
 
@@ -13,6 +13,7 @@ class CrashSignal:
     probability: float  # [0, 1]
     horizon_days: float  # Estimated days to event
     components: dict[str, float] = field(default_factory=dict)
+    n_agreeing: int = 0  # How many independent methods agree
 
     @property
     def level(self) -> str:
@@ -26,13 +27,20 @@ class CrashSignal:
             return "LOW"
 
 
-# Default weights from the plan
+# Updated weights including all 7 methods
 DEFAULT_WEIGHTS = {
-    "lppls_confidence": 0.30,
-    "lppls_tc_proximity": 0.15,
-    "gpd_var_exceedance": 0.15,
+    # Bubble detectors (highest weight — best accuracy)
+    "lppls_confidence": 0.20,
+    "lppls_tc_proximity": 0.10,
+    "gsadf_bubble": 0.15,
+    # Tail estimators
+    "gpd_var_exceedance": 0.10,
     "kappa_regime": 0.10,
-    "hill_thinning": 0.10,
+    "hill_thinning": 0.05,
+    "pickands_thinning": 0.05,
+    # Regime
+    "hurst_trending": 0.05,
+    # Other
     "deep_lppls": 0.10,
     "multiscale": 0.10,
 }
@@ -45,6 +53,11 @@ def aggregate_signals(
     """Combine individual indicator signals into a crash probability.
 
     Each component value should be in [0, 1].
+
+    Uses weighted average as base, then applies an agreement bonus:
+    when multiple independent method categories agree (signal > 0.5),
+    the probability is boosted. This rewards consensus across different
+    approaches (bubble detection, tail analysis, regime detection).
     """
     w = weights or DEFAULT_WEIGHTS
 
@@ -60,13 +73,43 @@ def aggregate_signals(
     if total_weight == 0:
         return CrashSignal(probability=0.0, horizon_days=float("inf"), components=components)
 
-    probability = weighted_sum / total_weight
+    base_probability = weighted_sum / total_weight
 
-    # Estimate horizon from LPPLS tc proximity if available
+    # Count how many independent method categories have elevated signals
+    categories = {
+        "bubble": ["lppls_confidence", "gsadf_bubble", "deep_lppls"],
+        "tail": ["kappa_regime", "hill_thinning", "pickands_thinning", "gpd_var_exceedance"],
+        "regime": ["hurst_trending"],
+        "structure": ["multiscale", "lppls_tc_proximity"],
+    }
+
+    n_agreeing = 0
+    for cat, keys in categories.items():
+        cat_signals = [components.get(k, 0.0) for k in keys if k in components]
+        if cat_signals and max(cat_signals) > 0.5:
+            n_agreeing += 1
+
+    # Agreement bonus: if 3+ categories agree, boost probability
+    if n_agreeing >= 3:
+        agreement_bonus = 0.15
+    elif n_agreeing >= 2:
+        agreement_bonus = 0.05
+    else:
+        agreement_bonus = 0.0
+
+    probability = min(1.0, base_probability + agreement_bonus)
+
     horizon = components.get("lppls_tc_days", float("inf"))
 
-    return CrashSignal(probability=probability, horizon_days=horizon, components=components)
+    return CrashSignal(
+        probability=probability,
+        horizon_days=horizon,
+        components=components,
+        n_agreeing=n_agreeing,
+    )
 
+
+# ── Signal converters ──────────────────────────────────────
 
 def lppls_confidence_signal(confidence: float) -> float:
     """Convert LPPLS confidence [0,1] to signal [0,1]."""
@@ -96,7 +139,6 @@ def kappa_regime_signal(kappa: float, benchmark: float) -> float:
     if np.isnan(kappa) or np.isnan(benchmark) or benchmark == 0:
         return 0.0
     ratio = kappa / benchmark
-    # ratio < 1 means fatter tails than Gaussian
     return np.clip(1.0 - ratio, 0.0, 1.0)
 
 
@@ -108,3 +150,34 @@ def hill_thinning_signal(alpha: float, alpha_prev: float) -> float:
         return 0.0
     change = (alpha_prev - alpha) / alpha_prev
     return np.clip(change, 0.0, 1.0)
+
+
+def pickands_signal(gamma: float, gamma_prev: float) -> float:
+    """Signal from increasing Pickands gamma (thickening tails)."""
+    if np.isnan(gamma) or np.isnan(gamma_prev):
+        return 0.0
+    if gamma_prev == 0:
+        return 0.0
+    # Increasing gamma = heavier tails
+    change = (gamma - gamma_prev) / abs(gamma_prev)
+    return np.clip(change, 0.0, 1.0)
+
+
+def gsadf_signal(gsadf_stat: float, cv95: float) -> float:
+    """Signal from GSADF test. Above critical value = explosive bubble."""
+    if np.isnan(gsadf_stat) or np.isnan(cv95) or cv95 == 0:
+        return 0.0
+    ratio = gsadf_stat / cv95
+    if ratio < 0.5:
+        return 0.0
+    return np.clip((ratio - 0.5) / 1.5, 0.0, 1.0)
+
+
+def hurst_signal(h: float) -> float:
+    """Signal from Hurst exponent. H > 0.5 = trending = potential bubble buildup."""
+    if np.isnan(h):
+        return 0.0
+    # Only signal when clearly trending (H > 0.55)
+    if h <= 0.55:
+        return 0.0
+    return np.clip((h - 0.55) / 0.3, 0.0, 1.0)

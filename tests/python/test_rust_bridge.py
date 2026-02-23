@@ -8,6 +8,8 @@ from fatcrash._core import (
     hill_rolling,
     kappa_metric,
     kappa_rolling,
+    taleb_kappa,
+    taleb_kappa_rolling,
     gpd_fit,
     gpd_var_es,
     gev_fit,
@@ -60,6 +62,36 @@ class TestKappa:
         data = rng.standard_normal(500)
         kappa_arr, benchmark = kappa_rolling(data, window=200, n_subsamples=5, n_sims=50)
         assert len(kappa_arr) == 500
+
+
+class TestTalebKappa:
+    def test_gaussian_near_zero(self):
+        rng = np.random.default_rng(42)
+        data = rng.standard_normal(2000)
+        kappa, benchmark = taleb_kappa(data, n0=30, n1=100, n_sims=200)
+        assert kappa < 0.4, f"Gaussian taleb_kappa {kappa} should be near 0"
+        assert not np.isnan(benchmark)
+
+    def test_cauchy_higher_than_gaussian(self):
+        rng = np.random.default_rng(77)
+        gauss = rng.standard_normal(3000)
+        cauchy = rng.standard_cauchy(3000)
+        k_gauss, _ = taleb_kappa(gauss, n0=30, n1=150, n_sims=100)
+        k_cauchy, _ = taleb_kappa(cauchy, n0=30, n1=150, n_sims=100)
+        assert k_cauchy > k_gauss, (
+            f"Cauchy kappa ({k_cauchy}) should > Gaussian kappa ({k_gauss})"
+        )
+
+    def test_rolling(self):
+        rng = np.random.default_rng(42)
+        data = rng.standard_normal(500)
+        kappa_arr, benchmark = taleb_kappa_rolling(data, window=250, n0=15, n1=50, n_sims=50)
+        assert len(kappa_arr) == 500
+        assert not np.isnan(benchmark)
+        # First 249 should be NaN, rest should have values
+        assert np.isnan(kappa_arr[0])
+        valid = kappa_arr[~np.isnan(kappa_arr)]
+        assert len(valid) > 0
 
 
 class TestEVT:

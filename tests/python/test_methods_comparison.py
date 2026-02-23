@@ -14,6 +14,8 @@ from fatcrash._core import (
     hill_rolling,
     kappa_metric,
     kappa_rolling,
+    taleb_kappa,
+    taleb_kappa_rolling,
     gpd_fit,
     gpd_var_es,
     gev_fit,
@@ -93,6 +95,34 @@ class TestKappaAcrossAssets:
         assert not np.isnan(benchmark), f"{asset_name}: benchmark is NaN"
         assert kappa > 0, f"{asset_name}: kappa should be positive"
         assert benchmark > 0, f"{asset_name}: benchmark should be positive"
+
+
+class TestTalebKappaAcrossAssets:
+    """Taleb kappa should work on all assets."""
+
+    @pytest.mark.parametrize("asset_name", ["btc", "spy", "gold"])
+    def test_taleb_kappa_runs(self, asset_name):
+        df = load_asset(asset_name)
+        returns = log_returns(df)
+        kappa, benchmark = taleb_kappa(returns, n0=30, n1=100, n_sims=100)
+        assert not np.isnan(benchmark), f"{asset_name}: benchmark is NaN"
+
+    @pytest.mark.parametrize("asset_name", ["btc", "spy", "gold"])
+    def test_taleb_kappa_rolling_runs(self, asset_name):
+        df = load_asset(asset_name)
+        returns = log_returns(df)
+        kappa_arr, benchmark = taleb_kappa_rolling(returns, window=252, n0=30, n1=100, n_sims=50)
+        assert len(kappa_arr) == len(returns)
+        valid = kappa_arr[~np.isnan(kappa_arr)]
+        assert len(valid) > 0, f"{asset_name}: all rolling Taleb kappa values are NaN"
+
+    def test_btc_higher_taleb_kappa_than_spy(self, btc, spy):
+        """BTC should have higher Taleb kappa (fatter tails) than SPY."""
+        btc_k, _ = taleb_kappa(log_returns(btc), n0=30, n1=100, n_sims=200)
+        spy_k, _ = taleb_kappa(log_returns(spy), n0=30, n1=100, n_sims=200)
+        assert btc_k > spy_k, (
+            f"BTC Taleb kappa ({btc_k:.3f}) should > SPY ({spy_k:.3f})"
+        )
 
 
 class TestEVTAcrossAssets:
@@ -254,6 +284,7 @@ class TestAggregator:
             "lppls_confidence": 0.8,
             "gpd_var_exceedance": 0.5,
             "kappa_regime": 0.3,
+            "taleb_kappa": 0.4,
             "hill_thinning": 0.2,
         }
         signal = aggregate_signals(components)
@@ -267,6 +298,7 @@ class TestAggregator:
             "lppls_tc_proximity": 0.9,
             "gpd_var_exceedance": 0.85,
             "kappa_regime": 0.8,
+            "taleb_kappa": 0.85,
             "hill_thinning": 0.9,
             "multiscale": 0.85,
         }
@@ -307,6 +339,12 @@ class TestForex:
         assert kappa > 0
         # Forex should also show fat tails vs Gaussian
         assert kappa < benchmark * 1.2  # Allow some slack
+
+    def test_taleb_kappa_on_forex(self, gbpusd):
+        returns = log_returns(gbpusd)
+        kappa, benchmark = taleb_kappa(returns, n0=30, n1=100, n_sims=100)
+        assert not np.isnan(benchmark)
+        # GBP/USD should show some fat-tailedness
 
     def test_gpd_on_forex(self, gbpusd):
         returns = log_returns(gbpusd)
@@ -365,6 +403,20 @@ class TestEdgeCases:
         assert abs(kappa - benchmark) < 0.15, (
             f"Gaussian kappa {kappa:.3f} too far from benchmark {benchmark:.3f}"
         )
+
+    def test_taleb_kappa_gaussian_low(self):
+        """For Gaussian data, Taleb kappa should be near 0."""
+        rng = np.random.default_rng(42)
+        gaussian = rng.standard_normal(2000)
+        kappa, benchmark = taleb_kappa(gaussian, n0=30, n1=100, n_sims=200)
+        assert kappa < 0.4, f"Gaussian Taleb kappa {kappa:.3f} should be low"
+
+    def test_taleb_kappa_cauchy_high(self):
+        """For Cauchy data, Taleb kappa should be high."""
+        rng = np.random.default_rng(42)
+        cauchy = rng.standard_cauchy(2000)
+        kappa, _ = taleb_kappa(cauchy, n0=30, n1=100, n_sims=100)
+        assert kappa > 0.3, f"Cauchy Taleb kappa {kappa:.3f} should be high"
 
     def test_gpd_on_exponential(self):
         """Exponential exceedances should give xi near 0."""

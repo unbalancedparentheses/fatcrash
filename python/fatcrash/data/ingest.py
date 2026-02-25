@@ -15,6 +15,10 @@ def from_csv(path: str | Path, date_col: str = "date", price_col: str = "close")
     Returns DataFrame with DatetimeIndex and at least a 'close' column.
     """
     df = pd.read_csv(path, parse_dates=[date_col])
+    if date_col not in df.columns:
+        raise ValueError(f"CSV missing date column '{date_col}'")
+    if price_col not in df.columns:
+        raise ValueError(f"CSV missing price column '{price_col}'")
     df = df.rename(columns={date_col: "date", price_col: "close"})
     df = df.set_index("date").sort_index()
     return df

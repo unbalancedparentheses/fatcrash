@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
 
 
@@ -10,6 +10,7 @@ class DetectionRequest(BaseModel):
     asset: str = "BTC"
     source: str = "coingecko"
     days: int = 365
+    use_cache: bool = True
 
 
 class DetectionResponse(BaseModel):
@@ -37,6 +38,7 @@ def create_app() -> FastAPI:
     async def detect(req: DetectionRequest):
         """Run crash detection on an asset."""
         import numpy as np
+        import pandas as pd
         from fatcrash.data import ingest, transforms
         from fatcrash.indicators.tail_indicator import estimate_tail_index, estimate_kappa, estimate_taleb_kappa
         from fatcrash.indicators.evt_indicator import compute_var_es
@@ -51,9 +53,13 @@ def create_app() -> FastAPI:
         if req.source == "coingecko":
             coin_map = {"BTC": "bitcoin", "ETH": "ethereum"}
             coin_id = coin_map.get(req.asset.upper(), req.asset.lower())
-            df = ingest.from_coingecko(coin_id=coin_id, days=req.days)
+            df = ingest.from_coingecko(coin_id=coin_id, days=req.days, use_cache=req.use_cache)
+        elif req.source == "yahoo":
+            end = None
+            start = (pd.Timestamp.now() - pd.Timedelta(days=req.days)).strftime("%Y-%m-%d")
+            df = ingest.from_yahoo(ticker=f"{req.asset}-USD", start=start, end=end, use_cache=req.use_cache)
         else:
-            df = ingest.from_yahoo(ticker=f"{req.asset}-USD")
+            raise HTTPException(status_code=400, detail=f"Unsupported source: {req.source}")
 
         returns = transforms.log_returns(df)
         components = {}

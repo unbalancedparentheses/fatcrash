@@ -35,25 +35,29 @@ def _load_data(
     csv_path: str | None = None,
     start: str | None = None,
     end: str | None = None,
+    use_cache: bool = True,
 ):
     from fatcrash.data import ingest
     import pandas as pd
 
-    if source == "csv" and csv_path:
+    if source == "csv":
+        if not csv_path:
+            console.print("[red]Missing --csv-path for source=csv[/]")
+            raise typer.Exit(1)
         return ingest.from_csv(csv_path)
     elif source == "sample":
         return ingest.from_sample(asset)
     elif source == "coingecko":
         coin_id = COINGECKO_MAP.get(asset.upper(), asset.lower())
-        return ingest.from_coingecko(coin_id=coin_id, days=days)
+        return ingest.from_coingecko(coin_id=coin_id, days=days, use_cache=use_cache)
     elif source == "yahoo":
         if start is None and end is None:
             end = None
             start = (pd.Timestamp.now() - pd.Timedelta(days=days)).strftime("%Y-%m-%d")
         ticker = TICKER_MAP.get(asset.upper(), asset)
-        return ingest.from_yahoo(ticker=ticker, start=start or "2015-01-01", end=end)
+        return ingest.from_yahoo(ticker=ticker, start=start or "2015-01-01", end=end, use_cache=use_cache)
     elif source == "ccxt":
-        return ingest.from_ccxt(symbol=f"{asset}/USDT", limit=days)
+        return ingest.from_ccxt(symbol=f"{asset}/USDT", limit=days, use_cache=use_cache)
     else:
         console.print(f"[red]Unknown source: {source}. Use: yahoo, sample, coingecko, ccxt, csv[/]")
         raise typer.Exit(1)
@@ -64,7 +68,10 @@ def detect(
     asset: str = typer.Option("BTC", help="Asset symbol (BTC, GOLD, SPX, etc.)"),
     source: str = typer.Option("yahoo", help="Data source: yahoo, coingecko, ccxt, csv"),
     days: int = typer.Option(365, help="Number of days of history"),
+    start: str | None = typer.Option(None, help="Start date (YYYY-MM-DD, yahoo only)"),
+    end: str | None = typer.Option(None, help="End date (YYYY-MM-DD, yahoo only)"),
     csv_path: str | None = typer.Option(None, help="Path to CSV file (if source=csv)"),
+    use_cache: bool = typer.Option(True, help="Use local cache for network sources"),
 ) -> None:
     """Run crash detection on an asset."""
     import numpy as np
@@ -72,7 +79,7 @@ def detect(
 
     console.print(f"[bold cyan]fatcrash[/] — analyzing {asset}...\n")
 
-    df = _load_data(asset, source, days, csv_path)
+    df = _load_data(asset, source, days, csv_path, start=start, end=end, use_cache=use_cache)
     returns = transforms.log_returns(df)
     log_p = transforms.log_prices(df)
     times = transforms.time_index(df)
@@ -150,6 +157,7 @@ def backtest(
     end: str = typer.Option("2018-06-01", help="End date"),
     source: str = typer.Option("yahoo", help="Data source"),
     window: int = typer.Option(252, help="Rolling window size"),
+    use_cache: bool = typer.Option(True, help="Use local cache for network sources"),
 ) -> None:
     """Run historical backtest against known crash periods."""
     import numpy as np
@@ -166,7 +174,7 @@ def backtest(
 
     console.print(f"[bold cyan]fatcrash backtest[/] — {asset} from {start} to {end}\n")
 
-    df = _load_data(asset, source, start=start, end=end)
+    df = _load_data(asset, source, start=start, end=end, use_cache=use_cache)
     returns = transforms.log_returns(df)
 
     console.print(f"Loaded {len(df)} data points")
@@ -229,13 +237,16 @@ def plot(
     indicator: str = typer.Option("hill", help="Indicator: hill, kappa, evt, qq"),
     source: str = typer.Option("yahoo", help="Data source"),
     days: int = typer.Option(365, help="Number of days"),
+    start: str | None = typer.Option(None, help="Start date (YYYY-MM-DD, yahoo only)"),
+    end: str | None = typer.Option(None, help="End date (YYYY-MM-DD, yahoo only)"),
+    use_cache: bool = typer.Option(True, help="Use local cache for network sources"),
 ) -> None:
     """Generate visualization plots."""
     from fatcrash.data import transforms
 
     console.print(f"[bold cyan]fatcrash plot[/] — {indicator} for {asset}\n")
 
-    df = _load_data(asset, source, days)
+    df = _load_data(asset, source, days, start=start, end=end, use_cache=use_cache)
     returns = transforms.log_returns(df)
 
     if indicator == "hill":

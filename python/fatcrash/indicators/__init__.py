@@ -22,9 +22,6 @@ from fatcrash.indicators.tail_indicator import (
     rolling_taleb_kappa,
 )
 
-# Deep LPPLS (deprecated wrapper)
-from fatcrash.indicators.deep_lppls import DeepLPPLSResult, fit_deep_lppls
-
 __all__ = [
     "estimate_tail_index",
     "rolling_tail_index",
@@ -45,7 +42,4 @@ __all__ = [
     "estimate_maxsum",
     "rolling_maxsum",
     "estimate_spectral",
-    # Deep LPPLS
-    "DeepLPPLSResult",
-    "fit_deep_lppls",
 ]

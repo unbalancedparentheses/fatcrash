@@ -35,14 +35,13 @@ class CrashSignal:
 # Updated weights including NN methods
 DEFAULT_WEIGHTS = {
     # Bubble detectors (highest weight — best accuracy)
-    "lppls_confidence": 0.15,
+    "lppls_confidence": 0.16,
     "lppls_tc_proximity": 0.06,
     "gsadf_bubble": 0.10,
     # NN bubble detectors
-    "deep_lppls": 0.05,
-    "mlnn_signal": 0.06,
-    "plnn_signal": 0.06,
-    "hlppl_signal": 0.06,
+    "mlnn_signal": 0.07,
+    "plnn_signal": 0.07,
+    "hlppl_signal": 0.08,
     # Tail estimators
     "gpd_var_exceedance": 0.07,
     "kappa_regime": 0.05,
@@ -92,7 +91,7 @@ def aggregate_signals(
 
     # Count how many independent method categories have elevated signals
     categories = {
-        "bubble": ["lppls_confidence", "gsadf_bubble", "deep_lppls",
+        "bubble": ["lppls_confidence", "gsadf_bubble",
                     "mlnn_signal", "plnn_signal", "hlppl_signal"],
         "tail": ["kappa_regime", "taleb_kappa", "hill_thinning", "pickands_thinning",
                  "gpd_var_exceedance", "deh_thinning", "qq_thinning", "maxsum_signal"],

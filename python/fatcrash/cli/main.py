@@ -28,8 +28,16 @@ COINGECKO_MAP = {
 }
 
 
-def _load_data(asset: str, source: str, days: int = 365, csv_path: str | None = None, start: str | None = None, end: str | None = None):
+def _load_data(
+    asset: str,
+    source: str,
+    days: int = 365,
+    csv_path: str | None = None,
+    start: str | None = None,
+    end: str | None = None,
+):
     from fatcrash.data import ingest
+    import pandas as pd
 
     if source == "csv" and csv_path:
         return ingest.from_csv(csv_path)
@@ -39,6 +47,9 @@ def _load_data(asset: str, source: str, days: int = 365, csv_path: str | None = 
         coin_id = COINGECKO_MAP.get(asset.upper(), asset.lower())
         return ingest.from_coingecko(coin_id=coin_id, days=days)
     elif source == "yahoo":
+        if start is None and end is None:
+            end = None
+            start = (pd.Timestamp.now() - pd.Timedelta(days=days)).strftime("%Y-%m-%d")
         ticker = TICKER_MAP.get(asset.upper(), asset)
         return ingest.from_yahoo(ticker=ticker, start=start or "2015-01-01", end=end)
     elif source == "ccxt":

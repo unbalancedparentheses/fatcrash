@@ -39,7 +39,10 @@ fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // LPPLS
     m.add_function(wrap_pyfunction!(lppls::fitter::lppls_fit, m)?)?;
     m.add_function(wrap_pyfunction!(lppls::confidence::lppls_confidence, m)?)?;
-    m.add_function(wrap_pyfunction!(lppls::solve_linear_py::lppls_solve_linear, m)?)?;
+    m.add_function(wrap_pyfunction!(
+        lppls::solve_linear_py::lppls_solve_linear,
+        m
+    )?)?;
 
     // Multiscale
     m.add_function(wrap_pyfunction!(multiscale::multiscale_signals, m)?)?;

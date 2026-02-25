@@ -8,13 +8,20 @@ import pandas as pd
 
 def log_prices(df: pd.DataFrame, col: str = "close") -> np.ndarray:
     """Compute log(price) series."""
-    return np.log(df[col].values)
+    prices = df[col].values
+    log_p = np.full_like(prices, np.nan, dtype=float)
+    mask = prices > 0
+    log_p[mask] = np.log(prices[mask])
+    return log_p
 
 
 def log_returns(df: pd.DataFrame, col: str = "close") -> np.ndarray:
     """Compute log returns: ln(p_t / p_{t-1})."""
     prices = df[col].values
-    return np.diff(np.log(prices))
+    log_p = np.full_like(prices, np.nan, dtype=float)
+    mask = prices > 0
+    log_p[mask] = np.log(prices[mask])
+    return np.diff(log_p)
 
 
 def time_index(df: pd.DataFrame) -> np.ndarray:

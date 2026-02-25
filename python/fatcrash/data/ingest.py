@@ -6,6 +6,8 @@ from pathlib import Path
 
 import pandas as pd
 
+from fatcrash.data import cache
+
 
 def from_csv(path: str | Path, date_col: str = "date", price_col: str = "close") -> pd.DataFrame:
     """Load OHLCV data from CSV.
@@ -23,9 +25,16 @@ def from_ccxt(
     symbol: str = "BTC/USDT",
     timeframe: str = "1d",
     limit: int = 1000,
+    use_cache: bool = True,
 ) -> pd.DataFrame:
     """Fetch OHLCV data via CCXT."""
     import ccxt
+
+    scope = f"{timeframe}:{limit}:{exchange}"
+    if use_cache:
+        cached = cache.load_cached("ccxt", symbol, scope)
+        if cached is not None:
+            return cached
 
     ex = getattr(ccxt, exchange)({"enableRateLimit": True})
     ohlcv = ex.fetch_ohlcv(symbol, timeframe=timeframe, limit=limit)
@@ -34,6 +43,9 @@ def from_ccxt(
     df["date"] = pd.to_datetime(df["timestamp"], unit="ms")
     df = df.set_index("date").sort_index()
     df = df.drop(columns=["timestamp"])
+    if use_cache:
+        cache.save_cache(df, "ccxt", symbol, scope)
+
     return df
 
 
@@ -41,9 +53,16 @@ def from_coingecko(
     coin_id: str = "bitcoin",
     vs_currency: str = "usd",
     days: int = 365,
+    use_cache: bool = True,
 ) -> pd.DataFrame:
     """Fetch daily prices from CoinGecko (free, no API key)."""
     import requests
+
+    scope = f"{vs_currency}:{days}"
+    if use_cache:
+        cached = cache.load_cached("coingecko", coin_id, scope)
+        if cached is not None:
+            return cached
 
     url = f"https://api.coingecko.com/api/v3/coins/{coin_id}/market_chart"
     params = {"vs_currency": vs_currency, "days": days, "interval": "daily"}
@@ -51,11 +70,16 @@ def from_coingecko(
     resp.raise_for_status()
     data = resp.json()
 
-    prices = data["prices"]
+    prices = data.get("prices")
+    if not prices:
+        raise ValueError(f"CoinGecko returned no prices for {coin_id}")
+
     df = pd.DataFrame(prices, columns=["timestamp", "close"])
     df["date"] = pd.to_datetime(df["timestamp"], unit="ms")
     df = df.set_index("date").sort_index()
     df = df.drop(columns=["timestamp"])
+    if use_cache:
+        cache.save_cache(df, "coingecko", coin_id, scope)
     return df
 
 
@@ -63,12 +87,19 @@ def from_yahoo(
     ticker: str = "BTC-USD",
     start: str = "2015-01-01",
     end: str | None = None,
+    use_cache: bool = True,
 ) -> pd.DataFrame:
     """Fetch data from Yahoo Finance via the free yfinance-like API."""
     import httpx
 
     if end is None:
         end = pd.Timestamp.now().strftime("%Y-%m-%d")
+
+    scope = f"1d:{start}:{end}"
+    if use_cache:
+        cached = cache.load_cached("yahoo", ticker, scope)
+        if cached is not None:
+            return cached
 
     # Use Yahoo Finance v8 chart API
     start_ts = int(pd.Timestamp(start).timestamp())
@@ -82,21 +113,35 @@ def from_yahoo(
     resp.raise_for_status()
     data = resp.json()
 
-    result = data["chart"]["result"][0]
-    timestamps = result["timestamp"]
-    quotes = result["indicators"]["quote"][0]
+    chart = data.get("chart", {})
+    result = chart.get("result")
+    if not result:
+        error = chart.get("error")
+        message = error.get("description") if isinstance(error, dict) else "unknown error"
+        raise ValueError(f"Yahoo Finance returned no data for {ticker}: {message}")
+
+    result = result[0]
+    timestamps = result.get("timestamp")
+    indicators = result.get("indicators", {})
+    quote = indicators.get("quote")
+    quotes = quote[0] if quote else None
+
+    if not timestamps or not quotes:
+        raise ValueError(f"Yahoo Finance returned empty data for {ticker} ({start} to {end})")
 
     df = pd.DataFrame(
         {
             "date": pd.to_datetime(timestamps, unit="s"),
-            "open": quotes["open"],
-            "high": quotes["high"],
-            "low": quotes["low"],
-            "close": quotes["close"],
-            "volume": quotes["volume"],
+            "open": quotes.get("open"),
+            "high": quotes.get("high"),
+            "low": quotes.get("low"),
+            "close": quotes.get("close"),
+            "volume": quotes.get("volume"),
         }
     )
     df = df.set_index("date").sort_index()
+    if use_cache:
+        cache.save_cache(df, "yahoo", ticker, scope)
     return df
 
 
@@ -104,6 +149,7 @@ def from_fred(
     series: str | list[str],
     start: str = "2007-01-01",
     end: str | None = None,
+    use_cache: bool = True,
 ) -> pd.DataFrame:
     """Fetch macro data from FRED (Federal Reserve Economic Data).
 
@@ -125,6 +171,12 @@ def from_fred(
     if isinstance(series, str):
         series = [series]
 
+    scope = f"{start}:{end}:{','.join(series)}"
+    if use_cache:
+        cached = cache.load_cached("fred", "series", scope)
+        if cached is not None:
+            return cached
+
     frames = {}
     for sid in series:
         url = "https://fred.stlouisfed.org/graph/fredgraph.csv"
@@ -140,8 +192,10 @@ def from_fred(
         df[col] = pd.to_numeric(df[col], errors="coerce")
         frames[sid] = df[col].rename(sid.lower())
 
-    result = pd.concat(frames.values(), axis=1)
-    return result.sort_index()
+    result = pd.concat(frames.values(), axis=1).sort_index()
+    if use_cache:
+        cache.save_cache(result, "fred", "series", scope)
+    return result
 
 
 def from_sample(asset: str = "btc") -> pd.DataFrame:

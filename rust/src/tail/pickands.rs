@@ -45,9 +45,15 @@ pub fn pickands_estimator(
     let use_abs = use_abs.unwrap_or(true);
 
     let mut values: Vec<f64> = if use_abs {
-        data.iter().map(|x| x.abs()).filter(|x| *x > 0.0).collect()
+        data.iter()
+            .map(|x| x.abs())
+            .filter(|x| x.is_finite() && *x > 0.0)
+            .collect()
     } else {
-        data.iter().copied().filter(|x| *x > 0.0).collect()
+        data.iter()
+            .copied()
+            .filter(|x| x.is_finite() && *x > 0.0)
+            .collect()
     };
 
     let n = values.len();
@@ -87,9 +93,17 @@ pub fn pickands_rolling<'py>(
     for i in (window - 1)..n {
         let slice = &data[(i + 1 - window)..=i];
         let mut values: Vec<f64> = if use_abs {
-            slice.iter().map(|x| x.abs()).filter(|x| *x > 0.0).collect()
+            slice
+                .iter()
+                .map(|x| x.abs())
+                .filter(|x| x.is_finite() && *x > 0.0)
+                .collect()
         } else {
-            slice.iter().copied().filter(|x| *x > 0.0).collect()
+            slice
+                .iter()
+                .copied()
+                .filter(|x| x.is_finite() && *x > 0.0)
+                .collect()
         };
 
         let vn = values.len();

@@ -35,10 +35,8 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: Install maturin
         run: pip install maturin
-      - name: Build and install
-        run: maturin develop --release
-      - name: Install test deps
-        run: pip install pytest numpy pandas scipy
+      - name: Build and install (with deps)
+        run: pip install .[dev]
       - name: Run tests
         run: pytest tests/python -v
 

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from fastapi import FastAPI
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class DetectionRequest(BaseModel):
@@ -23,7 +23,7 @@ class DetectionResponse(BaseModel):
 class WebhookConfig(BaseModel):
     url: str
     threshold: float = 0.5
-    assets: list[str] = ["BTC"]
+    assets: list[str] = Field(default_factory=lambda: ["BTC"])
 
 
 def create_app() -> FastAPI:
@@ -57,6 +57,15 @@ def create_app() -> FastAPI:
 
         returns = transforms.log_returns(df)
         components = {}
+        if len(returns) == 0:
+            signal = aggregate_signals(components)
+            return DetectionResponse(
+                asset=req.asset,
+                probability=signal.probability,
+                level=signal.level,
+                horizon_days=signal.horizon_days,
+                components=signal.components,
+            )
 
         try:
             tail = estimate_tail_index(returns)

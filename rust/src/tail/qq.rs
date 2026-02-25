@@ -24,7 +24,7 @@ fn qq_estimate(sorted_desc: &[f64], k: usize) -> f64 {
     let mut exp_quantile: Vec<f64> = Vec::with_capacity(k);
 
     for (i, &x) in sorted_desc.iter().enumerate().take(k) {
-        if x <= 0.0 {
+        if !x.is_finite() || x <= 0.0 {
             continue;
         }
         // Plotting position: the (i+1)-th largest has survival probability (i+1)/(k+1)
@@ -66,9 +66,15 @@ pub fn qq_estimator(
     let use_abs = use_abs.unwrap_or(true);
 
     let mut values: Vec<f64> = if use_abs {
-        data.iter().map(|x| x.abs()).filter(|x| *x > 0.0).collect()
+        data.iter()
+            .map(|x| x.abs())
+            .filter(|x| x.is_finite() && *x > 0.0)
+            .collect()
     } else {
-        data.iter().copied().filter(|x| *x > 0.0).collect()
+        data.iter()
+            .copied()
+            .filter(|x| x.is_finite() && *x > 0.0)
+            .collect()
     };
 
     let n = values.len();
@@ -107,9 +113,17 @@ pub fn qq_rolling<'py>(
     for i in (window - 1)..n {
         let slice = &data[(i + 1 - window)..=i];
         let mut values: Vec<f64> = if use_abs {
-            slice.iter().map(|x| x.abs()).filter(|x| *x > 0.0).collect()
+            slice
+                .iter()
+                .map(|x| x.abs())
+                .filter(|x| x.is_finite() && *x > 0.0)
+                .collect()
         } else {
-            slice.iter().copied().filter(|x| *x > 0.0).collect()
+            slice
+                .iter()
+                .copied()
+                .filter(|x| x.is_finite() && *x > 0.0)
+                .collect()
         };
 
         let vn = values.len();

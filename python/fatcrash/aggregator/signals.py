@@ -1,4 +1,9 @@
-"""Signal aggregation: combine all indicators into crash probability."""
+"""Signal aggregation: combine all indicators into crash probability.
+
+DISCLAIMER: This software is for academic research and educational purposes only.
+It does not constitute financial advice. No warranty is provided regarding the
+accuracy of predictions. Do not use for investment decisions.
+"""
 
 from __future__ import annotations
 
@@ -27,28 +32,32 @@ class CrashSignal:
             return "LOW"
 
 
-# Updated weights including all 13 methods
+# Updated weights including NN methods
 DEFAULT_WEIGHTS = {
     # Bubble detectors (highest weight — best accuracy)
-    "lppls_confidence": 0.18,
-    "lppls_tc_proximity": 0.08,
-    "gsadf_bubble": 0.12,
+    "lppls_confidence": 0.15,
+    "lppls_tc_proximity": 0.06,
+    "gsadf_bubble": 0.10,
+    # NN bubble detectors
+    "deep_lppls": 0.05,
+    "mlnn_signal": 0.06,
+    "plnn_signal": 0.06,
+    "hlppl_signal": 0.06,
     # Tail estimators
-    "gpd_var_exceedance": 0.08,
-    "kappa_regime": 0.06,
-    "taleb_kappa": 0.05,
-    "hill_thinning": 0.04,
-    "pickands_thinning": 0.04,
+    "gpd_var_exceedance": 0.07,
+    "kappa_regime": 0.05,
+    "taleb_kappa": 0.04,
+    "hill_thinning": 0.03,
+    "pickands_thinning": 0.03,
     "deh_thinning": 0.03,
     "qq_thinning": 0.03,
-    "maxsum_signal": 0.04,
+    "maxsum_signal": 0.03,
     # Regime
-    "hurst_trending": 0.04,
+    "hurst_trending": 0.03,
     "dfa_trending": 0.03,
     "spectral_memory": 0.03,
     # Other
-    "deep_lppls": 0.08,
-    "multiscale": 0.07,
+    "multiscale": 0.06,
 }
 
 
@@ -83,7 +92,8 @@ def aggregate_signals(
 
     # Count how many independent method categories have elevated signals
     categories = {
-        "bubble": ["lppls_confidence", "gsadf_bubble", "deep_lppls"],
+        "bubble": ["lppls_confidence", "gsadf_bubble", "deep_lppls",
+                    "mlnn_signal", "plnn_signal", "hlppl_signal"],
         "tail": ["kappa_regime", "taleb_kappa", "hill_thinning", "pickands_thinning",
                  "gpd_var_exceedance", "deh_thinning", "qq_thinning", "maxsum_signal"],
         "regime": ["hurst_trending", "dfa_trending", "spectral_memory"],
@@ -252,3 +262,33 @@ def spectral_signal(d: float) -> float:
     if d <= 0.05:
         return 0.0
     return np.clip((d - 0.05) / 0.4, 0.0, 1.0)
+
+
+# ── NN signal converters ──────────────────────────────────
+
+def mlnn_signal(confidence: float, is_bubble: bool) -> float:
+    """Convert M-LNN result to signal [0,1].
+
+    Uses confidence directly if bubble filter passes, halved otherwise.
+    """
+    if np.isnan(confidence):
+        return 0.0
+    if is_bubble:
+        return np.clip(confidence, 0.0, 1.0)
+    return np.clip(confidence * 0.5, 0.0, 1.0)
+
+
+def plnn_signal(confidence: float, is_bubble: bool) -> float:
+    """Convert P-LNN result to signal [0,1]."""
+    if np.isnan(confidence):
+        return 0.0
+    if is_bubble:
+        return np.clip(confidence, 0.0, 1.0)
+    return np.clip(confidence * 0.5, 0.0, 1.0)
+
+
+def hlppl_signal(bubble_score: float) -> float:
+    """Convert HLPPL bubble score [0,1] directly to signal."""
+    if np.isnan(bubble_score):
+        return 0.0
+    return np.clip(bubble_score, 0.0, 1.0)

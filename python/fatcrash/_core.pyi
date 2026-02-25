@@ -181,3 +181,12 @@ def gsadf_rolling(
     window: int,
     min_window: int | None = None,
 ) -> npt.NDArray[np.float64]: ...
+
+# LPPLS solve_linear
+def lppls_solve_linear(
+    times: npt.NDArray[np.float64],
+    log_prices: npt.NDArray[np.float64],
+    tc: float,
+    m: float,
+    omega: float,
+) -> tuple[float, float, float, float, float] | None: ...

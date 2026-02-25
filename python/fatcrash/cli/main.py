@@ -80,7 +80,13 @@ def detect(
     console.print(f"[bold cyan]fatcrash[/] — analyzing {asset}...\n")
 
     df = _load_data(asset, source, days, csv_path, start=start, end=end, use_cache=use_cache)
+    if len(df) < 2:
+        console.print("[yellow]Not enough data to compute returns.[/]")
+        raise typer.Exit(0)
     returns = transforms.log_returns(df)
+    if len(returns) == 0 or np.all(np.isnan(returns)):
+        console.print("[yellow]Not enough valid returns after preprocessing.[/]")
+        raise typer.Exit(0)
     log_p = transforms.log_prices(df)
     times = transforms.time_index(df)
 
@@ -175,7 +181,13 @@ def backtest(
     console.print(f"[bold cyan]fatcrash backtest[/] — {asset} from {start} to {end}\n")
 
     df = _load_data(asset, source, start=start, end=end, use_cache=use_cache)
+    if len(df) < window + 1:
+        console.print("[yellow]Not enough data for backtest window.[/]")
+        raise typer.Exit(0)
     returns = transforms.log_returns(df)
+    if len(returns) == 0 or np.all(np.isnan(returns)):
+        console.print("[yellow]Not enough valid returns after preprocessing.[/]")
+        raise typer.Exit(0)
 
     console.print(f"Loaded {len(df)} data points")
 
@@ -247,7 +259,22 @@ def plot(
     console.print(f"[bold cyan]fatcrash plot[/] — {indicator} for {asset}\n")
 
     df = _load_data(asset, source, days, start=start, end=end, use_cache=use_cache)
+    if len(df) < 2:
+        console.print("[yellow]Not enough data to plot.[/]")
+        raise typer.Exit(0)
     returns = transforms.log_returns(df)
+    if len(returns) == 0 or np.all(np.isnan(returns)):
+        console.print("[yellow]Not enough valid returns after preprocessing.[/]")
+        raise typer.Exit(0)
+
+
+@app.command("cache-clear")
+def cache_clear() -> None:
+    """Clear local data cache."""
+    from fatcrash.data.cache import clear_cache
+
+    clear_cache()
+    console.print("[green]Cache cleared.[/]")
 
     if indicator == "hill":
         from fatcrash.viz.tail_dashboard import hill_plot

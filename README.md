@@ -30,6 +30,17 @@ fatcrash detect --asset BTC --source sample
 fatcrash backtest --asset BTC --start 2017-01-01 --end 2018-06-01
 ```
 
+### Data Sources and Cache
+
+By default, network sources are cached to `~/.cache/fatcrash` to avoid rate limits and speed up repeated runs.
+
+```bash
+fatcrash detect --asset BTC --source yahoo --days 365
+fatcrash detect --asset BTC --source yahoo --start 2020-01-01 --end 2021-01-01
+fatcrash detect --asset BTC --source coingecko --no-use-cache
+fatcrash cache-clear
+```
+
 > **DISCLAIMER:** This software is for academic research and educational purposes only. It does not constitute financial advice. No warranty is provided regarding the accuracy of predictions. Do not use for investment decisions.
 
 ## Why This Exists

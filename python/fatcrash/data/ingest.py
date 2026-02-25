@@ -21,6 +21,7 @@ def from_csv(path: str | Path, date_col: str = "date", price_col: str = "close")
         raise ValueError(f"CSV missing price column '{price_col}'")
     df = df.rename(columns={date_col: "date", price_col: "close"})
     df = df.set_index("date").sort_index()
+    df = df.dropna(subset=["close"])
     return df
 
 
@@ -144,6 +145,7 @@ def from_yahoo(
         }
     )
     df = df.set_index("date").sort_index()
+    df = df.dropna(subset=["close"])
     if use_cache:
         cache.save_cache(df, "yahoo", ticker, scope)
     return df

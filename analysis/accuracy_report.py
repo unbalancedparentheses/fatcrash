@@ -1045,13 +1045,12 @@ def main():
     print("FRED DAILY FOREX: PICKANDS, HURST & GSADF")
     print("=" * 70)
 
-    fred_dir = "/Users/unbalancedparen/projects/forex-centuries/data/sources/fred/daily"
-    fred_pairs = [
-        "fred_aud_usd.csv", "fred_eur_usd.csv", "fred_gbp_usd.csv",
-        "fred_jpy_usd.csv", "fred_cad_usd.csv", "fred_chf_usd.csv",
-        "fred_cny_usd.csv", "fred_nzd_usd.csv", "fred_mxn_usd.csv",
-        "fred_brl_usd.csv", "fred_krw_usd.csv", "fred_inr_usd.csv",
-    ]
+    fred_dir = Path("/Users/unbalancedparen/projects/forex-centuries/data/sources/fred/daily")
+    fred_skip = {"fred_usd_broad_index.csv", "fred_usd_major_index.csv"}
+    fred_pairs = sorted(
+        f.name for f in fred_dir.glob("fred_*.csv")
+        if f.name not in fred_skip
+    ) if fred_dir.is_dir() else []
 
     print(
         f"\n  {'Pair':<14} {'N':<7} {'Pickands':<10} {'Hurst':<8} {'DFA':<8} "
@@ -1062,7 +1061,7 @@ def main():
 
     fred_results = []
     for fname in fred_pairs:
-        fpath = f"{fred_dir}/{fname}"
+        fpath = fred_dir / fname
         try:
             raw = pd.read_csv(fpath)
         except FileNotFoundError:
@@ -1206,7 +1205,7 @@ def main():
 
     if fred_results:
         fred_df = pd.DataFrame(fred_results)
-        print("\n  FRED Daily Forex (12 pairs):")
+        print(f"\n  FRED Daily Forex ({len(fred_df)} pairs):")
         print(f"    Pickands > 0 (heavy tails):   {(fred_df['pickands'] > 0).sum()}/{len(fred_df)}")
         print(f"    DEH > 0 (heavy tails):        {(fred_df['deh'] > 0).sum()}/{len(fred_df)}")
         print(f"    Hurst > 0.5 (persistent):     {(fred_df['hurst'] > 0.5).sum()}/{len(fred_df)}")

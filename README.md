@@ -122,29 +122,40 @@ When 3+ independent method categories (bubble, tail, regime, structure) agree, t
 
 ## 500 Years of Forex Data
 
-### FRED Daily (12 currency pairs, 1971-2025)
+### FRED Daily (23 currency pairs, 1971-2025)
 
 | Pair | Hill alpha | QQ alpha | DEH gamma | Hurst H | DFA alpha | GSADF bubble? |
 |------|:---------:|:-------:|:--------:|:------:|:--------:|:---:|
-| AUD/USD | 2.58 | 2.30 | 0.44 | 0.56 | 0.56 | YES |
-| GBP/USD | 4.13 | 4.11 | 0.19 | 0.58 | 0.55 | YES |
-| JPY/USD | 3.94 | 4.02 | 0.18 | 0.58 | 0.58 | YES |
-| CAD/USD | 3.84 | 3.58 | 0.27 | 0.57 | 0.53 | YES |
-| CNY/USD | 2.79 | 1.70 | 0.69 | 0.59 | 0.71 | YES |
-| MXN/USD | 2.04 | 1.98 | 0.44 | 0.56 | 0.57 | YES |
-| BRL/USD | 2.80 | 3.12 | 0.15 | 0.56 | 0.58 | YES |
+| VEF/USD | 1.20 | 0.82 | 1.06 | 0.53 | 0.82 | YES |
+| HKD/USD | 1.73 | 2.12 | 0.24 | 0.54 | 0.62 | YES |
 | KRW/USD | 1.90 | 1.93 | 0.44 | 0.67 | 0.60 | YES |
+| MXN/USD | 2.04 | 1.98 | 0.44 | 0.56 | 0.57 | YES |
+| LKR/USD | 2.14 | 1.97 | 0.51 | 0.58 | 0.66 | YES |
+| TWD/USD | 2.31 | 2.62 | 0.21 | 0.60 | 0.63 | YES |
+| THB/USD | 2.38 | 2.43 | 0.33 | 0.58 | 0.59 | YES |
+| MYR/USD | 2.42 | 2.46 | 0.33 | 0.58 | 0.60 | YES |
+| AUD/USD | 2.58 | 2.30 | 0.44 | 0.56 | 0.56 | YES |
 | INR/USD | 2.62 | 2.56 | 0.34 | 0.57 | 0.58 | YES |
-| EUR/USD | 4.88 | 4.90 | 0.12 | 0.56 | 0.54 | no |
-| CHF/USD | 3.81 | 3.59 | 0.28 | 0.57 | 0.54 | no |
+| CNY/USD | 2.79 | 1.70 | 0.69 | 0.59 | 0.71 | YES |
+| BRL/USD | 2.80 | 3.12 | 0.15 | 0.56 | 0.58 | YES |
 | NZD/USD | 2.89 | 2.46 | 0.44 | 0.57 | 0.56 | no |
+| ZAR/USD | 3.19 | 3.43 | 0.15 | 0.58 | 0.54 | YES |
+| NOK/USD | 3.39 | 3.44 | 0.22 | 0.57 | 0.53 | YES |
+| SEK/USD | 3.50 | 2.88 | 0.41 | 0.58 | 0.55 | no |
+| SGD/USD | 3.59 | 3.66 | 0.18 | 0.56 | 0.53 | YES |
+| CHF/USD | 3.81 | 3.59 | 0.28 | 0.57 | 0.54 | no |
+| CAD/USD | 3.84 | 3.58 | 0.27 | 0.57 | 0.53 | YES |
+| DKK/USD | 3.84 | 3.23 | 0.37 | 0.58 | 0.55 | no |
+| JPY/USD | 3.94 | 4.02 | 0.18 | 0.58 | 0.58 | YES |
+| GBP/USD | 4.13 | 4.11 | 0.19 | 0.58 | 0.55 | YES |
+| EUR/USD | 4.88 | 4.90 | 0.12 | 0.56 | 0.54 | no |
 
-Universals across all 12 pairs:
-- **Fat tails**: DEH gamma > 0 for 12/12. Mean Hill alpha = 3.19, mean QQ alpha = 3.02 — two independent estimators converge.
-- **Persistence**: Hurst H > 0.55 for 12/12, DFA alpha > 0.5 for 12/12.
-- **Bubbles**: 9/12 show explosive episodes via GSADF.
+Universals across all 23 pairs:
+- **Fat tails**: DEH gamma > 0 for 23/23. Mean Hill alpha = 2.95, mean QQ alpha = 2.84 — two independent estimators converge.
+- **Persistence**: Hurst H > 0.5 for 23/23, DFA alpha > 0.5 for 23/23.
+- **Bubbles**: 18/23 show explosive episodes via GSADF.
 
-KRW/USD has the fattest tails (Hill alpha = 1.90, approaching infinite variance). CNY/USD shows the strongest persistence (DFA = 0.71) — consistent with managed float dynamics.
+VEF/USD (Venezuela) is the extreme case: Hill alpha = 1.20, QQ alpha = 0.82, DEH gamma = 1.06 — every estimator confirms infinite variance. KRW/USD has the fattest tails among liquid pairs (Hill alpha = 1.90). CNY/USD shows the strongest persistence (DFA = 0.71) — consistent with managed float dynamics.
 
 ### Clio Infra Yearly (30 countries, 1500-2013)
 

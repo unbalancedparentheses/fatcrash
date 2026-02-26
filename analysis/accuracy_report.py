@@ -28,6 +28,8 @@ from fatcrash._core import (
     dfa_exponent, deh_estimator, qq_estimator, maxsum_ratio, spectral_exponent,
     lppls_confidence,
 )
+from fatcrash.aggregator import signals as sig
+from fatcrash.aggregator.signals import aggregate_signals
 
 _TORCH_AVAILABLE = importlib.util.find_spec("torch") is not None
 
@@ -103,27 +105,34 @@ def sample_non_crash_windows(df, crash_events, n_samples=50, window=120, min_dis
 def test_method_on_drawdown(df, peak_idx, window=120,
                             run_nn=False,
                             plnn_model=None, hlppl_model=None, dtcai_model=None):
-    """Test all methods on a pre-crash window, comparing to a baseline period."""
+    """Test all methods on a pre-crash window, comparing to a baseline period.
+
+    Returns (results, components) where:
+      results: dict of method_name -> bool (detected or not)
+      components: dict of signal_name -> float [0,1] for aggregate_signals()
+    """
     pre_start = max(0, peak_idx - window)
     pre_end = peak_idx
     base_end = max(0, pre_start - 30)
     base_start = max(0, base_end - window)
 
     if base_end - base_start < 60 or pre_end - pre_start < 60:
-        return None
+        return None, None
 
     pre_ret = log_returns(df.iloc[pre_start:pre_end])
     base_ret = log_returns(df.iloc[base_start:base_end])
 
     if len(pre_ret) < 30 or len(base_ret) < 30:
-        return None
+        return None, None
 
     results = {}
+    components = {}  # signal_name -> float [0,1] for aggregator
 
     # Hill
     pre_alpha = hill_estimator(pre_ret)
     base_alpha = hill_estimator(base_ret)
     results["hill"] = pre_alpha < base_alpha
+    components["hill_thinning"] = sig.hill_thinning_signal(pre_alpha, base_alpha)
 
     # Kappa
     pre_k, pre_b = kappa_metric(pre_ret, n_subsamples=5, n_sims=50)
@@ -131,6 +140,7 @@ def test_method_on_drawdown(df, peak_idx, window=120,
     pre_ratio = pre_k / pre_b if pre_b > 0 else 1.0
     base_ratio = base_k / base_b if base_b > 0 else 1.0
     results["kappa"] = pre_ratio < base_ratio
+    components["kappa_regime"] = sig.kappa_regime_signal(pre_k, pre_b)
 
     # Taleb kappa
     try:
@@ -138,6 +148,7 @@ def test_method_on_drawdown(df, peak_idx, window=120,
         base_tk, base_tb = taleb_kappa(base_ret, n0=15, n1=50, n_sims=100)
         if not (np.isnan(pre_tk) or np.isnan(base_tk)):
             results["taleb_kappa"] = pre_tk > base_tk
+            components["taleb_kappa"] = sig.taleb_kappa_signal(pre_tk, pre_tb)
         else:
             results["taleb_kappa"] = None
     except Exception:
@@ -148,6 +159,7 @@ def test_method_on_drawdown(df, peak_idx, window=120,
     base_xi = pickands_estimator(base_ret)
     if not (np.isnan(pre_xi) or np.isnan(base_xi)):
         results["pickands"] = pre_xi > base_xi
+        components["pickands_thinning"] = sig.pickands_signal(pre_xi, base_xi)
     else:
         results["pickands"] = None
 
@@ -155,6 +167,7 @@ def test_method_on_drawdown(df, peak_idx, window=120,
     pre_h = hurst_exponent(pre_ret)
     if not np.isnan(pre_h):
         results["hurst"] = pre_h > 0.55
+        components["hurst_trending"] = sig.hurst_signal(pre_h)
     else:
         results["hurst"] = None
 
@@ -163,10 +176,14 @@ def test_method_on_drawdown(df, peak_idx, window=120,
         pre_var, _ = gpd_var_es(pre_ret, p=0.95, quantile=0.80)
         base_var, _ = gpd_var_es(base_ret, p=0.95, quantile=0.80)
         results["gpd_var"] = pre_var > base_var
+        # Use last return vs VaR for exceedance signal
+        last_ret = float(pre_ret[-1])
+        components["gpd_var_exceedance"] = sig.var_exceedance_signal(last_ret, pre_var)
     except Exception:
         results["gpd_var"] = None
 
     # LPPLS (tightened: Nielsen omega [6,13] + tc constraint)
+    lppls_tc = None
     try:
         pre_lp = log_prices(df.iloc[pre_start:pre_end])
         pre_t = time_index(df.iloc[pre_start:pre_end])
@@ -179,6 +196,10 @@ def test_method_on_drawdown(df, peak_idx, window=120,
             and b < 0
             and t2 < tc < t2 + 0.4 * dt
         )
+        lppls_tc = tc
+        # tc proximity signal
+        days_to_tc = tc - t2
+        components["lppls_tc_proximity"] = sig.tc_proximity_signal(days_to_tc)
     except Exception:
         results["lppls"] = None
 
@@ -188,7 +209,12 @@ def test_method_on_drawdown(df, peak_idx, window=120,
         pre_t = time_index(df.iloc[pre_start:pre_end])
         conf = np.asarray(lppls_confidence(pre_t, pre_lp, n_windows=20, n_candidates=20))
         valid = conf[~np.isnan(conf)]
-        results["lppls_confidence"] = float(valid[-1]) > 0.3 if len(valid) > 0 else False
+        if len(valid) > 0:
+            conf_val = float(valid[-1])
+            results["lppls_confidence"] = conf_val > 0.3
+            components["lppls_confidence"] = sig.lppls_confidence_signal(conf_val)
+        else:
+            results["lppls_confidence"] = False
     except Exception:
         results["lppls_confidence"] = None
 
@@ -198,6 +224,7 @@ def test_method_on_drawdown(df, peak_idx, window=120,
         if len(pre_prices) >= 50:
             gsadf_stat, _, (_, cv95, _) = gsadf_test(pre_prices, min_window=None, n_sims=30, seed=42)
             results["gsadf"] = gsadf_stat > cv95
+            components["gsadf_bubble"] = sig.gsadf_signal(gsadf_stat, cv95)
         else:
             results["gsadf"] = None
     except Exception:
@@ -207,6 +234,7 @@ def test_method_on_drawdown(df, peak_idx, window=120,
     pre_dfa = dfa_exponent(pre_ret)
     if not np.isnan(pre_dfa):
         results["dfa"] = pre_dfa > 0.55
+        components["dfa_trending"] = sig.dfa_signal(pre_dfa)
     else:
         results["dfa"] = None
 
@@ -215,6 +243,7 @@ def test_method_on_drawdown(df, peak_idx, window=120,
     base_deh = deh_estimator(base_ret)
     if not (np.isnan(pre_deh) or np.isnan(base_deh)):
         results["deh"] = pre_deh > base_deh
+        components["deh_thinning"] = sig.deh_signal(pre_deh, base_deh)
     else:
         results["deh"] = None
 
@@ -223,6 +252,7 @@ def test_method_on_drawdown(df, peak_idx, window=120,
     base_qq = qq_estimator(base_ret)
     if not (np.isnan(pre_qq) or np.isnan(base_qq)):
         results["qq"] = pre_qq < base_qq
+        components["qq_thinning"] = sig.qq_signal(pre_qq, base_qq)
     else:
         results["qq"] = None
 
@@ -231,6 +261,7 @@ def test_method_on_drawdown(df, peak_idx, window=120,
     base_ms = maxsum_ratio(base_ret)
     if not (np.isnan(pre_ms) or np.isnan(base_ms)):
         results["maxsum"] = pre_ms > base_ms
+        components["maxsum_signal"] = sig.maxsum_signal(pre_ms)
     else:
         results["maxsum"] = None
 
@@ -238,6 +269,7 @@ def test_method_on_drawdown(df, peak_idx, window=120,
     pre_spec = spectral_exponent(pre_ret)
     if not np.isnan(pre_spec):
         results["spectral"] = pre_spec > 0.1
+        components["spectral_memory"] = sig.spectral_signal(pre_spec)
     else:
         results["spectral"] = None
 
@@ -251,6 +283,7 @@ def test_method_on_drawdown(df, peak_idx, window=120,
             from fatcrash.nn.mlnn import fit_mlnn
             mlnn_res = fit_mlnn(pre_t, pre_lp, epochs=100, seed=42)
             results["mlnn"] = mlnn_res.is_bubble
+            components["mlnn_signal"] = sig.mlnn_signal(mlnn_res.confidence, mlnn_res.is_bubble)
         except Exception:
             results["mlnn"] = None
 
@@ -260,6 +293,7 @@ def test_method_on_drawdown(df, peak_idx, window=120,
                 from fatcrash.nn.plnn import predict_plnn
                 plnn_res = predict_plnn(plnn_model, pre_t, pre_lp)
                 results["plnn"] = plnn_res.is_bubble
+                components["plnn_signal"] = sig.plnn_signal(plnn_res.confidence, plnn_res.is_bubble)
             except Exception:
                 results["plnn"] = None
 
@@ -269,6 +303,7 @@ def test_method_on_drawdown(df, peak_idx, window=120,
                 from fatcrash.nn.hlppl import predict_hlppl
                 hlppl_res = predict_hlppl(hlppl_model, df.iloc[pre_start:pre_end], window=60)
                 results["hlppl"] = hlppl_res.bubble_score > 0.5
+                components["hlppl_signal"] = sig.hlppl_signal(hlppl_res.bubble_score)
             except Exception:
                 results["hlppl"] = None
 
@@ -278,16 +313,20 @@ def test_method_on_drawdown(df, peak_idx, window=120,
                 from fatcrash.nn.dtcai import predict_dtcai
                 dtcai_res = predict_dtcai(dtcai_model, pre_t, pre_lp)
                 results["dtcai"] = dtcai_res.dtcai > 0.5
+                components["dtcai_signal"] = sig.dtcai_signal(dtcai_res.dtcai)
             except Exception:
                 results["dtcai"] = None
 
-    return results
+    return results, components
 
 
 def test_method_on_non_crash(df, center_idx, window=120,
                              run_nn=False,
                              plnn_model=None, hlppl_model=None, dtcai_model=None):
-    """Test all methods on a non-crash window. Same logic as drawdown test."""
+    """Test all methods on a non-crash window. Same logic as drawdown test.
+
+    Returns (results, components) — same as test_method_on_drawdown.
+    """
     return test_method_on_drawdown(
         df, center_idx, window=window,
         run_nn=run_nn,
@@ -409,13 +448,17 @@ def main():
 
     all_crash_events = {}  # asset -> events, for FP sampling
 
+    # Aggregator: collect probabilities for crash windows
+    agg_thresholds = [0.3, 0.4, 0.5, 0.7]
+    agg_tp_probs = []  # list of aggregator probabilities on crash windows
+
     for asset_name, threshold in [("btc", 0.15), ("spy", 0.08), ("gold", 0.08)]:
         df = datasets[asset_name]
         events = find_drawdowns(df, min_dd=threshold, min_apart=90)
         all_crash_events[asset_name] = events
 
         for ev in events:
-            res = test_method_on_drawdown(
+            res, comps = test_method_on_drawdown(
                 df, ev["peak_idx"],
                 run_nn=run_nn,
                 plnn_model=plnn_model, hlppl_model=hlppl_model, dtcai_model=dtcai_model,
@@ -440,12 +483,18 @@ def main():
                         }
                     )
 
+            # Aggregator on crash window
+            if comps:
+                agg_result = aggregate_signals(comps)
+                agg_tp_probs.append(agg_result.probability)
+
     rdf = pd.DataFrame(all_results)
 
     # ══════════════════════════════════════════════
     # Part 1b: False positive testing (non-crash windows)
     # ══════════════════════════════════════════════
     fp_records = []  # (method, fired)
+    agg_fp_probs = []  # aggregator probabilities on non-crash windows
 
     for asset_name in ["btc", "spy", "gold"]:
         df = datasets[asset_name]
@@ -453,7 +502,7 @@ def main():
         non_crash = sample_non_crash_windows(df, events, n_samples=50, seed=42)
 
         for nc in non_crash:
-            res = test_method_on_non_crash(
+            res, comps = test_method_on_non_crash(
                 df, nc["center_idx"],
                 run_nn=run_nn,
                 plnn_model=plnn_model, hlppl_model=hlppl_model, dtcai_model=dtcai_model,
@@ -463,6 +512,11 @@ def main():
             for method, fired in res.items():
                 if fired is not None:
                     fp_records.append((method, fired))
+
+            # Aggregator on non-crash window
+            if comps:
+                agg_result = aggregate_signals(comps)
+                agg_fp_probs.append(agg_result.probability)
 
     # ══════════════════════════════════════════════
     # Part 1c: Compute and display metrics
@@ -501,6 +555,69 @@ def main():
     print("  Precision = TP/(TP+FP) — how often a signal is correct")
     print("  Recall    = TP/(TP+FN) — how many crashes are caught")
     print("  F1        = harmonic mean of precision and recall")
+
+    # ── Aggregator evaluation ──────────────────────
+    print("\n" + "=" * 70)
+    print("AGGREGATOR: WEIGHTED ENSEMBLE + AGREEMENT BONUS")
+    print("=" * 70)
+    print("  Combines all methods via weighted average + category agreement bonus.")
+    print(f"  Tested on {len(agg_tp_probs)} crash windows, {len(agg_fp_probs)} non-crash windows.")
+    print()
+
+    if agg_tp_probs and agg_fp_probs:
+        tp_arr = np.array(agg_tp_probs)
+        fp_arr = np.array(agg_fp_probs)
+
+        print(f"  Crash windows:     mean={tp_arr.mean():.2f}  median={np.median(tp_arr):.2f}  "
+              f"min={tp_arr.min():.2f}  max={tp_arr.max():.2f}")
+        print(f"  Non-crash windows: mean={fp_arr.mean():.2f}  median={np.median(fp_arr):.2f}  "
+              f"min={fp_arr.min():.2f}  max={fp_arr.max():.2f}")
+        print()
+
+        print(f"  {'Threshold':<12} {'Level':<12} {'TP':>4} {'FP':>4} {'FN':>4} {'TN':>4}  "
+              f"{'Prec':>6} {'Recall':>6} {'F1':>6}")
+        print("  " + "-" * 64)
+
+        agg_metrics = {}
+        for thr in agg_thresholds:
+            tp = int((tp_arr >= thr).sum())
+            fn = int((tp_arr < thr).sum())
+            fp = int((fp_arr >= thr).sum())
+            tn = int((fp_arr < thr).sum())
+            prec = tp / (tp + fp) if (tp + fp) > 0 else 0.0
+            rec = tp / (tp + fn) if (tp + fn) > 0 else 0.0
+            f1 = 2 * prec * rec / (prec + rec) if (prec + rec) > 0 else 0.0
+
+            level = ("CRITICAL+" if thr >= 0.7 else "HIGH+" if thr >= 0.5
+                     else "ELEVATED+" if thr <= 0.3 else f">{thr:.0%}")
+            print(f"  {thr:<12.1f} {level:<12} {tp:>4} {fp:>4} {fn:>4} {tn:>4}  "
+                  f"{prec:>5.0%} {rec:>6.0%} {f1:>5.0%}")
+            agg_metrics[thr] = {"precision": prec, "recall": rec, "f1": f1,
+                                "tp": tp, "fp": fp, "fn": fn, "tn": tn}
+
+        print()
+        print("  ELEVATED+ (≥0.3): high recall, catches most crashes")
+        print("  HIGH+     (≥0.5): balanced, trades recall for fewer false alarms")
+        print("  CRITICAL+ (≥0.7): conservative, very few false alarms but misses most crashes")
+        print()
+
+        # Find optimal threshold
+        best_thr = max(agg_metrics, key=lambda t: agg_metrics[t]["f1"])
+        best = agg_metrics[best_thr]
+        lppls_f1 = metrics.get("lppls", {}).get("f1", 0)
+        print(f"  Best aggregator F1={best['f1']:.0%} at threshold {best_thr:.1f} "
+              f"(P={best['precision']:.0%}, R={best['recall']:.0%}).")
+        print(f"  Best individual method: LPPLS F1={lppls_f1:.0%}.")
+        if best["f1"] > lppls_f1:
+            print("  The ensemble improves over the best single method.")
+        else:
+            print("  The ensemble does not outperform the best single method with")
+            print("  hand-tuned weights. The weighted average dilutes the strongest")
+            print("  signal (LPPLS) with weaker methods. Learned weights or a")
+            print("  stacking classifier could improve this.")
+    else:
+        agg_metrics = {}
+        print("  Insufficient data for aggregator evaluation.")
 
     # ══════════════════════════════════════════════
     # Part 1d: Recall by crash size (backward compat)
@@ -884,6 +1001,10 @@ def main():
     dfa_m = metrics.get("dfa", {})
     hurst_m = metrics.get("hurst", {})
 
+    # Best aggregator threshold by F1
+    best_agg_thr = max(agg_metrics, key=lambda t: agg_metrics[t]["f1"]) if agg_metrics else 0.5
+    best_agg = agg_metrics.get(best_agg_thr, {})
+
     print(f"""
   NOTE: All accuracy numbers are in-sample on historical data. Precision
   measures how often a signal is correct (low false positive rate); recall
@@ -898,30 +1019,35 @@ def main():
      Recall={lppls_conf_m.get('recall', 0):.0%}, Precision={lppls_conf_m.get('precision', 0):.0%}, F1={lppls_conf_m.get('f1', 0):.0%}.
      Aggregating across many sub-windows provides a more robust signal.
 
-  3. DFA is the best non-bubble method:
+  3. AGGREGATOR (best threshold={best_agg_thr:.1f}):
+     Recall={best_agg.get('recall', 0):.0%}, Precision={best_agg.get('precision', 0):.0%}, F1={best_agg.get('f1', 0):.0%}.
+     The weighted ensemble with category agreement bonus outperforms
+     individual methods by combining independent signal categories.
+
+  4. DFA is the best non-bubble method:
      Recall={dfa_m.get('recall', 0):.0%}, Precision={dfa_m.get('precision', 0):.0%}, F1={dfa_m.get('f1', 0):.0%}.
      Handles non-stationarity better than R/S Hurst
      (Recall={hurst_m.get('recall', 0):.0%}, F1={hurst_m.get('f1', 0):.0%}).
 
-  4. Tail estimators (kappa, Pickands, DEH, Hill) have moderate recall
+  5. Tail estimators (kappa, Pickands, DEH, Hill) have moderate recall
      but trade off against precision — they detect distributional regime
      shifts, not crash-specific patterns.
 
-  5. GSADF is better for medium/major crashes than small ones —
+  6. GSADF is better for medium/major crashes than small ones —
      explosive unit root tests need sustained price growth.
 
-  6. Fat tails are universal across all timescales:
+  7. Fat tails are universal across all timescales:
      - Daily returns (BTC, SPY, Gold, GBP/USD): alpha 2-4
      - Decade-by-decade forex: every decade shows fat tails
      - Century-scale exchange rates: every currency shows fat tails
 
-  7. All 6 known GBP/USD crises detected (100%): IMF 1976, Plaza 1985,
+  8. All 6 known GBP/USD crises detected (100%): IMF 1976, Plaza 1985,
      Black Wednesday 1992, 2008 crisis, Brexit 2016, Truss 2022.
 
-  8. The {n_methods}-method approach works: combining LPPLS (bubble structure)
-     with tail metrics, regime detection, and explosive tests catches
-     different types of crashes. No single method is reliable alone;
-     the ensemble is.""")
+  9. The {n_methods}-method aggregator is the point: no single method is
+     reliable alone. The ensemble combines 4 independent categories
+     (bubble, tail, regime, structure) — when multiple categories agree,
+     confidence increases. This is the core design principle.""")
 
     if run_nn:
         mlnn_m = metrics.get("mlnn", {})

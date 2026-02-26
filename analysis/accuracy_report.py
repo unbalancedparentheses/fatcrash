@@ -17,6 +17,7 @@ accuracy of predictions. Do not use for investment decisions.
 import argparse
 import importlib
 import json
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -32,6 +33,53 @@ from fatcrash.aggregator import signals as sig
 from fatcrash.aggregator.signals import aggregate_signals
 
 _TORCH_AVAILABLE = importlib.util.find_spec("torch") is not None
+
+
+# ── FRED forex loaders ─────────────────────────────────────
+
+# FRED convention: DEXUS__ = "USD per foreign" (use as-is), DEX__US = "foreign per USD" (invert)
+_FRED_USD_PER_FOREIGN = {"DEXUSUK", "DEXUSAL", "DEXUSNZ", "DEXUSEU"}
+
+
+def load_fred_forex(path) -> "pd.DataFrame | None":
+    """Read a FRED daily forex CSV and return DataFrame with DatetimeIndex + ``close`` column.
+
+    Pairs quoted as "foreign per USD" (DEX__US) are inverted so that a drawdown
+    in the resulting series corresponds to a currency crisis (foreign currency
+    losing value against USD).
+    """
+    try:
+        raw = pd.read_csv(path)
+    except Exception:
+        return None
+    if "observation_date" not in raw.columns:
+        return None
+    val_col = [c for c in raw.columns if c != "observation_date"][0]
+    raw["observation_date"] = pd.to_datetime(raw["observation_date"], errors="coerce")
+    raw = raw.dropna(subset=["observation_date"])
+    raw[val_col] = pd.to_numeric(raw[val_col], errors="coerce")
+    raw = raw.dropna(subset=[val_col])
+    raw = raw[raw[val_col] > 0]
+    if len(raw) < 200:
+        return None
+    prices = raw[val_col].values.copy()
+    if val_col not in _FRED_USD_PER_FOREIGN:
+        # "foreign per USD" — invert so drawdown = currency crisis
+        prices = 1.0 / prices
+    df = pd.DataFrame({"close": prices}, index=pd.DatetimeIndex(raw["observation_date"].values))
+    df = df.sort_index()
+    return df
+
+
+def fred_min_dd(pair: str) -> float:
+    """Return minimum drawdown threshold for a FRED forex pair.
+
+    Major pairs use 8%; emerging-market pairs use 15%.
+    """
+    majors = {"gbp", "eur", "jpy", "chf", "aud", "cad", "nzd"}
+    # Extract pair name from filename like "fred_gbp_usd.csv"
+    key = pair.replace("fred_", "").replace("_usd.csv", "").replace(".csv", "").lower()
+    return 0.08 if key in majors else 0.15
 
 
 # ── Drawdown detection ─────────────────────────────────────
@@ -626,6 +674,227 @@ def main():
         print("  Insufficient data for aggregator evaluation.")
 
     # ══════════════════════════════════════════════
+    # Part 1e: EXTENDED DATASET (FRED Forex + Options Backtester)
+    # ══════════════════════════════════════════════
+    ext_tp_records = []  # (method, detected)
+    ext_fp_records = []  # (method, fired)
+    ext_agg_tp_probs = []
+    ext_agg_fp_probs = []
+    ext_pair_stats = []  # for summary
+
+    # ── FRED Forex ────────────────────────────────
+    fred_dir = Path("/Users/unbalancedparen/projects/forex-centuries/data/sources/fred/daily")
+    fred_skip = {"fred_usd_broad_index.csv", "fred_usd_major_index.csv"}
+    fred_count = 0
+
+    if fred_dir.is_dir():
+        for csv_path in sorted(fred_dir.glob("fred_*.csv")):
+            if csv_path.name in fred_skip:
+                continue
+            df_fx = load_fred_forex(csv_path)
+            if df_fx is None:
+                continue
+            pair_name = csv_path.name
+            min_dd = fred_min_dd(pair_name)
+            events = find_drawdowns(df_fx, min_dd=min_dd, min_apart=90)
+            fred_count += 1
+
+            for ev in events:
+                res, comps = test_method_on_drawdown(
+                    df_fx, ev["peak_idx"],
+                    run_nn=run_nn,
+                    plnn_model=plnn_model, hlppl_model=hlppl_model,
+                    dtcai_model=dtcai_model,
+                )
+                if res is None:
+                    continue
+                for method, detected in res.items():
+                    if detected is not None:
+                        ext_tp_records.append((method, detected))
+                if comps:
+                    agg_result = aggregate_signals(comps)
+                    ext_agg_tp_probs.append(agg_result.probability)
+
+            non_crash = sample_non_crash_windows(df_fx, events, n_samples=20, seed=42)
+            for nc in non_crash:
+                res, comps = test_method_on_non_crash(
+                    df_fx, nc["center_idx"],
+                    run_nn=run_nn,
+                    plnn_model=plnn_model, hlppl_model=hlppl_model,
+                    dtcai_model=dtcai_model,
+                )
+                if res is None:
+                    continue
+                for method, fired in res.items():
+                    if fired is not None:
+                        ext_fp_records.append((method, fired))
+                if comps:
+                    agg_result = aggregate_signals(comps)
+                    ext_agg_fp_probs.append(agg_result.probability)
+
+            ext_pair_stats.append({
+                "source": "FRED", "name": pair_name.replace("fred_", "").replace(".csv", "").upper(),
+                "n_crash": len(events), "n_rows": len(df_fx),
+            })
+
+    # ── Options Backtester ────────────────────────
+    opts_dir = Path("/Users/unbalancedparen/projects/options_backtester/tests/data")
+    opts_files = [
+        "spy_crisis_stocks.csv",
+        "spy_covid_stocks.csv",
+        "spy_bear_stocks.csv",
+        "spy_lowvol_stocks.csv",
+        "qqq_2020_stocks.csv",
+        "iwm_2020_stocks.csv",
+    ]
+
+    if opts_dir.is_dir():
+        for fname in opts_files:
+            fpath = opts_dir / fname
+            if not fpath.exists():
+                continue
+            try:
+                df_opt = from_csv(str(fpath), date_col="date", price_col="close")
+            except Exception:
+                continue
+            if len(df_opt) < 60:
+                continue
+            events = find_drawdowns(df_opt, min_dd=0.08, min_apart=30)
+
+            for ev in events:
+                res, comps = test_method_on_drawdown(
+                    df_opt, ev["peak_idx"],
+                    run_nn=run_nn,
+                    plnn_model=plnn_model, hlppl_model=hlppl_model,
+                    dtcai_model=dtcai_model,
+                )
+                if res is None:
+                    continue
+                for method, detected in res.items():
+                    if detected is not None:
+                        ext_tp_records.append((method, detected))
+                if comps:
+                    agg_result = aggregate_signals(comps)
+                    ext_agg_tp_probs.append(agg_result.probability)
+
+            non_crash = sample_non_crash_windows(df_opt, events, n_samples=10, seed=42)
+            for nc in non_crash:
+                res, comps = test_method_on_non_crash(
+                    df_opt, nc["center_idx"],
+                    run_nn=run_nn,
+                    plnn_model=plnn_model, hlppl_model=hlppl_model,
+                    dtcai_model=dtcai_model,
+                )
+                if res is None:
+                    continue
+                for method, fired in res.items():
+                    if fired is not None:
+                        ext_fp_records.append((method, fired))
+                if comps:
+                    agg_result = aggregate_signals(comps)
+                    ext_agg_fp_probs.append(agg_result.probability)
+
+            ext_pair_stats.append({
+                "source": "OptsBT", "name": fname.replace("_stocks.csv", "").upper(),
+                "n_crash": len(events), "n_rows": len(df_opt),
+            })
+
+    # ── Print extended results ────────────────────
+    ext_n_crash = sum(1 for m, d in ext_tp_records if m == "lppls" and d is not None)
+    ext_n_noncrash = sum(1 for m, d in ext_fp_records if m == "lppls" and d is not None)
+
+    if ext_tp_records:
+        ext_metrics = compute_metrics(ext_tp_records, ext_fp_records, all_methods)
+
+        print("\n" + "=" * 70)
+        print("EXTENDED DATASET: PRECISION / RECALL / F1")
+        print("=" * 70)
+        print(f"  FRED forex pairs: {fred_count}, Options backtester files: {len([s for s in ext_pair_stats if s['source'] == 'OptsBT'])}")
+        print(f"  Crash windows: {ext_n_crash}, Non-crash windows: {ext_n_noncrash}")
+        if ext_pair_stats:
+            print("  Breakdown:")
+            for s in ext_pair_stats:
+                print(f"    {s['source']:<6} {s['name']:<16} {s['n_rows']:>6} rows, {s['n_crash']:>3} crashes")
+        print()
+        print(f"  {'Method':<20} {'TP':>4} {'FP':>4} {'FN':>4} {'TN':>4}  "
+              f"{'Prec':>6} {'Recall':>6} {'F1':>6}")
+        print("  " + "-" * 64)
+
+        ext_sorted = sorted(all_methods, key=lambda m: ext_metrics.get(m, {}).get("f1", 0), reverse=True)
+        for method in ext_sorted:
+            m = ext_metrics.get(method)
+            if m is None or (m["tp"] + m["fn"]) == 0:
+                continue
+            print(
+                f"  {method:<20} {m['tp']:>4} {m['fp']:>4} {m['fn']:>4} {m['tn']:>4}  "
+                f"{m['precision']:>5.0%} {m['recall']:>6.0%} {m['f1']:>5.0%}"
+            )
+
+        # ── Combined (original + extended) ────────
+        combined_tp = tp_records + ext_tp_records
+        combined_fp = fp_records + ext_fp_records
+        combined_metrics = compute_metrics(combined_tp, combined_fp, all_methods)
+
+        orig_n_crash = sum(1 for m, d in tp_records if m == "lppls" and d is not None)
+        orig_n_noncrash = sum(1 for m, d in fp_records if m == "lppls" and d is not None)
+
+        print("\n" + "=" * 70)
+        print("COMBINED DATASET: PRECISION / RECALL / F1")
+        print("=" * 70)
+        print(f"  Original (BTC/SPY/Gold): {orig_n_crash} crash + {orig_n_noncrash} non-crash windows")
+        print(f"  Extended (FRED+OptsBT):  {ext_n_crash} crash + {ext_n_noncrash} non-crash windows")
+        print(f"  Total:                   {orig_n_crash + ext_n_crash} crash + {orig_n_noncrash + ext_n_noncrash} non-crash windows")
+        print()
+        print(f"  {'Method':<20} {'TP':>4} {'FP':>4} {'FN':>4} {'TN':>4}  "
+              f"{'Prec':>6} {'Recall':>6} {'F1':>6}")
+        print("  " + "-" * 64)
+
+        comb_sorted = sorted(all_methods, key=lambda m: combined_metrics.get(m, {}).get("f1", 0), reverse=True)
+        for method in comb_sorted:
+            m = combined_metrics.get(method)
+            if m is None or (m["tp"] + m["fn"]) == 0:
+                continue
+            print(
+                f"  {method:<20} {m['tp']:>4} {m['fp']:>4} {m['fn']:>4} {m['tn']:>4}  "
+                f"{m['precision']:>5.0%} {m['recall']:>6.0%} {m['f1']:>5.0%}"
+            )
+
+        # ── Extended aggregator evaluation ────────
+        if ext_agg_tp_probs and ext_agg_fp_probs:
+            ext_tp_arr = np.array(ext_agg_tp_probs)
+            ext_fp_arr = np.array(ext_agg_fp_probs)
+
+            print("\n" + "=" * 70)
+            print("EXTENDED AGGREGATOR: WEIGHTED ENSEMBLE + AGREEMENT BONUS")
+            print("=" * 70)
+            print(f"  Tested on {len(ext_agg_tp_probs)} crash windows, {len(ext_agg_fp_probs)} non-crash windows.")
+            print()
+            print(f"  Crash windows:     mean={ext_tp_arr.mean():.2f}  median={np.median(ext_tp_arr):.2f}  "
+                  f"min={ext_tp_arr.min():.2f}  max={ext_tp_arr.max():.2f}")
+            print(f"  Non-crash windows: mean={ext_fp_arr.mean():.2f}  median={np.median(ext_fp_arr):.2f}  "
+                  f"min={ext_fp_arr.min():.2f}  max={ext_fp_arr.max():.2f}")
+            print()
+
+            print(f"  {'Threshold':<12} {'Level':<12} {'TP':>4} {'FP':>4} {'FN':>4} {'TN':>4}  "
+                  f"{'Prec':>6} {'Recall':>6} {'F1':>6}")
+            print("  " + "-" * 64)
+
+            for thr in agg_thresholds:
+                tp = int((ext_tp_arr >= thr).sum())
+                fn = int((ext_tp_arr < thr).sum())
+                fp = int((ext_fp_arr >= thr).sum())
+                tn = int((ext_fp_arr < thr).sum())
+                prec = tp / (tp + fp) if (tp + fp) > 0 else 0.0
+                rec = tp / (tp + fn) if (tp + fn) > 0 else 0.0
+                f1 = 2 * prec * rec / (prec + rec) if (prec + rec) > 0 else 0.0
+                level = ("CRITICAL+" if thr >= 0.7 else "HIGH+" if thr >= 0.5
+                         else "ELEVATED+" if thr <= 0.3 else f">{thr:.0%}")
+                print(f"  {thr:<12.1f} {level:<12} {tp:>4} {fp:>4} {fn:>4} {tn:>4}  "
+                      f"{prec:>5.0%} {rec:>6.0%} {f1:>5.0%}")
+    else:
+        print("\n  (No extended dataset found — FRED forex / options backtester dirs not available)")
+
+    # ══════════════════════════════════════════════
     # Part 1d: Recall by crash size (backward compat)
     # ══════════════════════════════════════════════
     if len(rdf) > 0:
@@ -766,6 +1035,8 @@ def main():
             )
     except FileNotFoundError:
         print("  (forex-centuries data not available)")
+    except Exception as e:
+        print(f"  (MeasuringWorth CSV parse error: {e})")
 
     # ══════════════════════════════════════════════
     # Part 5: FRED Daily Forex — Pickands, Hurst, GSADF

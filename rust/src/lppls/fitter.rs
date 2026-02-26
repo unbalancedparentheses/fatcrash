@@ -192,8 +192,8 @@ pub fn lppls_fit(
         tc_max,
         m_min: 0.1,
         m_max: 0.9,
-        omega_min: 2.0,
-        omega_max: 25.0,
+        omega_min: 6.0,
+        omega_max: 13.0,
     };
 
     let pop_size = pop_size.unwrap_or(50);

@@ -15,8 +15,8 @@ impl Default for FilterConfig {
         Self {
             m_min: 0.1,
             m_max: 0.9,
-            omega_min: 2.0,
-            omega_max: 25.0,
+            omega_min: 6.0,
+            omega_max: 13.0,
             max_damping: 1.0,
         }
     }
@@ -29,7 +29,7 @@ pub fn passes_filter(params: &LpplsParams, config: &FilterConfig) -> bool {
         return false;
     }
 
-    // 2. omega in [2, 25]
+    // 2. omega in [6, 13] (Nielsen et al. 2024 filter)
     if params.omega < config.omega_min || params.omega > config.omega_max {
         return false;
     }

@@ -36,7 +36,7 @@ fn fit_single_window(
     for _ in 0..n_candidates {
         let tc = t_end + rng.gen_range(0.0..t_range * 0.3);
         let m = rng.gen_range(0.1..0.9);
-        let omega = rng.gen_range(2.0..25.0);
+        let omega = rng.gen_range(6.0..13.0);
 
         if let Some((a, b, c1, c2, rss)) = solve_linear(slice_t, slice_p, tc, m, omega) {
             if rss < best_rss {

@@ -33,6 +33,7 @@ dev = [
 ]
 deep = [
     "torch>=2.2",
+    "scikit-learn>=1.4",
 ]
 
 [project.scripts]

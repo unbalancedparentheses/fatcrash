@@ -47,7 +47,7 @@ def fit_lppls(
     # Sornette filter check
     is_bubble = (
         0.1 <= m <= 0.9
-        and 2.0 <= omega <= 25.0
+        and 6.0 <= omega <= 13.0
         and b < 0.0
     )
 

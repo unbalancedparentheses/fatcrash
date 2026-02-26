@@ -4,7 +4,7 @@
 
 The median tail index across 138 countries is alpha = 1.57. Standard risk models assume finite variance (alpha > 2) and often finite kurtosis (alpha > 4). For the majority of the world's currencies, these assumptions are empirically false. fatcrash detects crashes by measuring what actually matters: the tail.
 
-Python + Rust (PyO3). 16 methods. 215 tests. 500 years of data.
+Python + Rust (PyO3). 17 methods. 246 tests. 500 years of data.
 
 ```python
 from fatcrash.data.ingest import from_sample
@@ -65,25 +65,40 @@ VaR under normality, Sharpe ratios, CAPM betas, mean-variance optimization — a
 
 ## Results
 
-### Crash detection accuracy (39 drawdowns across BTC, SPY, Gold)
+### Crash detection: precision, recall, and F1 (39 drawdowns across BTC, SPY, Gold)
 
-| Method | Small (<15%) | Medium (15-30%) | Major (>30%) | Overall |
-|--------|:---:|:---:|:---:|:---:|
-| **LPPLS** | **100%** | **100%** | **100%** | **100%** |
-| **DFA** | **86%** | **88%** | **62%** | **82%** |
-| Hurst | 57% | 65% | 50% | 59% |
-| Max-Stability Kappa | 57% | 47% | 38% | 49% |
-| Pickands | 43% | 53% | 50% | 49% |
-| DEH | 43% | 41% | 62% | 46% |
-| GPD VaR | 40% | 55% | 0% | 42% |
-| GSADF | 14% | 59% | 38% | 38% |
-| QQ | 36% | 35% | 50% | 38% |
-| Taleb Kappa | 21% | 35% | 50% | 33% |
-| Max-to-Sum | 36% | 29% | 25% | 31% |
-| Spectral | 21% | 29% | 38% | 28% |
-| Hill | 29% | 29% | 25% | 28% |
+All accuracy numbers are in-sample on historical data. Methods are tested on both crash windows (true positives) and non-crash windows (false positives) sampled at least 180 days from any crash.
 
-LPPLS detects all 39 drawdowns — it fits the bubble *shape*, not just tail statistics. DFA is the best non-bubble method at 82%, outperforming Hurst R/S (59%) because detrended fluctuation analysis handles non-stationarity. DEH and Taleb kappa are most useful on major crashes (62% and 50%) where the tail structure genuinely deteriorates. Hill alpha alone is unreliable (28%) but contributes to the aggregate.
+| Method | Precision | Recall | F1 | Notes |
+|--------|:---------:|:------:|:--:|-------|
+| **LPPLS** | **37%** | **74%** | **50%** | Tightened: Nielsen omega [6,13] + tc constraint |
+| **LPPLS confidence** | **29%** | **90%** | **43%** | Multi-window aggregation (rayon-parallelized) |
+| GSADF | 38% | 38% | 38% | Best for medium/major crashes |
+| **DFA** | **22%** | **82%** | **34%** | Best non-bubble method |
+| Hurst | 19% | 59% | 28% | DFA handles non-stationarity better |
+| Pickands | 19% | 49% | 27% | |
+| Kappa | 19% | 49% | 27% | |
+| DEH | 18% | 46% | 26% | Most useful on major crashes (62%) |
+| Spectral | 22% | 28% | 25% | |
+| Taleb Kappa | 20% | 33% | 25% | 50% recall on major crashes |
+| QQ | 16% | 38% | 23% | |
+| GPD VaR | 12% | 42% | 19% | |
+| Max-to-Sum | 12% | 31% | 18% | |
+| Hill | 12% | 28% | 16% | Unreliable alone, contributes to ensemble |
+
+**Why precision is low for tail/regime methods:** These methods detect distributional regime shifts (tail thickening, persistent dynamics), not crash-specific patterns. They fire in many non-crash periods because fat tails and persistence are pervasive in financial data. This is by design — they measure the *distributional regime*, not a specific crash. LPPLS and GSADF have higher precision because they detect bubble-specific structure.
+
+### Recall by crash size
+
+| Method | Small (<15%) | Medium (15-30%) | Major (>30%) |
+|--------|:---:|:---:|:---:|
+| LPPLS confidence | 93% | 94% | 75% |
+| LPPLS | 86% | 71% | 62% |
+| DFA | 86% | 88% | 62% |
+| Hurst | 57% | 65% | 50% |
+| GSADF | 14% | 59% | 38% |
+| DEH | 43% | 41% | 62% |
+| Taleb Kappa | 21% | 35% | 50% |
 
 ### Combined detector
 
@@ -146,7 +161,7 @@ Summary across 30 countries:
 
 Germany, Austria, Argentina, and Portugal saturate at Taleb kappa = 1.0 — Cauchy-like behavior where the CLT does not operate at any practical sample size. Italy (H = 0.80, DFA = 1.44) and Portugal (H = 0.85) show the strongest persistence over century-scale data.
 
-## The 16 Methods
+## The 17 Methods
 
 ### Overview
 
@@ -168,6 +183,7 @@ Germany, Austria, Argentina, and Portugal saturate at Taleb kappa = 1.0 — Cauc
 | 14 | M-LNN | Bubble (NN) | Per-series LPPLS via neural network | tc, m, omega, confidence |
 | 15 | P-LNN | Bubble (NN) | Pre-trained LPPLS (~700x faster) | tc, m, omega, confidence |
 | 16 | HLPPL | Bubble (NN) | Dual-stream transformer + sentiment | bubble score [0, 1] |
+| 17 | DTCAI | Bubble (NN) | LPPLS reliability classifier + DTC | DTCAI score [0, 1] |
 
 ### Tail estimation
 
@@ -189,7 +205,7 @@ Germany, Austria, Argentina, and Portugal saturate at Taleb kappa = 1.0 — Cauc
 
 **Hurst exponent** (Hurst, 1951). Persistence via rescaled range (R/S) analysis. H = 0.5 is a random walk; H > 0.5 means trends persist; H < 0.5 means mean-reversion.
 
-**DFA** (Peng et al., 1994). Detrended fluctuation analysis: divides into windows, removes linear trend per window, regresses log(RMS of residuals) vs log(window size). Handles non-stationarity better than R/S — best non-bubble crash detector at 82%.
+**DFA** (Peng et al., 1994). Detrended fluctuation analysis: divides into windows, removes linear trend per window, regresses log(RMS of residuals) vs log(window size). Handles non-stationarity better than R/S — best non-bubble crash detector (82% recall, 34% F1).
 
 **Spectral exponent** (Geweke & Porter-Hudak, 1983). Estimates long-memory parameter d from the periodogram near frequency zero: f(lambda) ~ |lambda|^(1-2d). Relation to Hurst: d = H - 0.5. Confirms persistence from the frequency domain.
 
@@ -233,13 +249,23 @@ model = train_hlppl(train_dfs, crash_labels, window=60, epochs=50)
 result = predict_hlppl(model, ohlcv_df)  # result.bubble_score
 ```
 
+**DTCAI** — Distance-to-Crash AI (Lee, Jeong, Park & Ahn, 2025). Trains a classifier (ANN, Random Forest, or Logistic Regression) on 7 LPPLS parameters to assess the reliability of each LPPLS fit. The DTCAI score combines the Distance-to-Crash ratio (how far into the bubble the current window extends) with the AI reliability probability: DTCAI = DTC * P. Addresses a key LPPLS weakness: it always produces a tc estimate even when no bubble exists. Uses the Bree & Joseph (2013) crash criterion for labeling.
+
+```python
+from fatcrash.nn.dtcai import train_dtcai, predict_dtcai
+from fatcrash.nn.dtcai_data import generate_dtcai_dataset
+dataset = generate_dtcai_dataset(prices, window_size=504, n_fits_per_window=10)
+model = train_dtcai(dataset, model_type="ANN", epochs=50)
+result = predict_dtcai(model, times, log_prices)  # result.dtcai
+```
+
 ## Signal Aggregation
 
 Methods grouped into 4 independent categories. When 3+ categories agree, probability gets a +15% bonus.
 
 | Category | Methods | What it detects |
 |----------|---------|-----------------|
-| **Bubble** | LPPLS, GSADF, M-LNN, P-LNN, HLPPL | Super-exponential growth, explosive unit roots |
+| **Bubble** | LPPLS, GSADF, M-LNN, P-LNN, HLPPL, DTCAI | Super-exponential growth, explosive unit roots |
 | **Tail** | Hill, Pickands, DEH, QQ, Taleb Kappa, Max-Stability Kappa, Max-to-Sum, GPD | Tail thickening, distributional regime shifts |
 | **Regime** | Hurst, DFA, Spectral | Transition from mean-reverting to persistent dynamics |
 | **Structure** | Multiscale, LPPLS tc proximity | Cross-timeframe agreement, timing |
@@ -256,22 +282,24 @@ Rust (PyO3, _core.so)                Python
 │       MaxSum, Hurst, DFA,  │       │   lppls_indicator.py             │
 │       Spectral             │       │   bubble_indicator.py            │
 │                            │       │   evt_indicator.py               │
-│ EVT:  GPD, GEV             │       │   deep_lppls.py (deprecated)     │
-│                            │       │                                  │
-│ LPPLS: fit, confidence,    │       │ nn/                              │
-│        solve_linear        │──────▶│   mlnn.py      (M-LNN)          │
-│                            │       │   plnn.py      (P-LNN)          │
-│ Bubble: GSADF              │       │   hlppl.py     (HLPPL)          │
+│ EVT:  GPD, GEV             │       │                                  │
+│                            │       │ nn/                              │
+│ LPPLS: fit, confidence,    │──────▶│   mlnn.py      (M-LNN)          │
+│        solve_linear        │       │   plnn.py      (P-LNN)          │
+│                            │       │   hlppl.py     (HLPPL)          │
+│ Bubble: GSADF              │       │   dtcai.py     (DTCAI)          │
+│                            │       │   crash_labels.py (crash detect) │
+│ Multiscale                 │       │   dtcai_data.py (dataset gen)   │
 │                            │       │   lppls_torch.py (shared)       │
-│ Multiscale                 │       │   synthetic.py  (data gen)      │
+│                            │       │   synthetic.py  (data gen)      │
 │                            │       │   sentiment.py  (volume proxy)  │
-│ rayon: parallel CMA-ES,    │       │                                  │
-│        GSADF, confidence   │       │ aggregator/signals.py            │
-│                            │       │ cli/ viz/ service/ data/         │
+│                            │       │                                  │
+│ rayon: parallel CMA-ES,    │       │ aggregator/signals.py            │
+│        GSADF, confidence   │       │ cli/ viz/ service/ data/         │
 └────────────────────────────┘       └──────────────────────────────────┘
 ```
 
-All 13 classical estimators are implemented in Rust and exposed to Python via PyO3. The computationally intensive methods (LPPLS CMA-ES, GSADF, confidence) use rayon for parallelization. The 3 neural network methods are in Python (PyTorch) and call `lppls_solve_linear` from Rust for the analytical linear parameter solve.
+All 13 classical estimators are implemented in Rust and exposed to Python via PyO3. The computationally intensive methods (LPPLS CMA-ES, GSADF, confidence) use rayon for parallelization. The 4 neural network methods are in Python (PyTorch/sklearn) and call `lppls_solve_linear` from Rust for the analytical linear parameter solve.
 
 | Component | Language | Why |
 |-----------|----------|-----|
@@ -280,7 +308,7 @@ All 13 classical estimators are implemented in Rust and exposed to Python via Py
 | GSADF test | Rust | O(n^2) BSADF + Monte Carlo, parallelized |
 | GEV/GPD fitting | Rust | Rolling EVT needs speed |
 | All tail & regime estimators | Rust | Called at every rolling window step |
-| M-LNN, P-LNN, HLPPL | Python (PyTorch) | GPU support, autograd for training |
+| M-LNN, P-LNN, HLPPL, DTCAI | Python (PyTorch/sklearn) | GPU support, autograd for training |
 | Data ingestion, viz, CLI | Python | Ecosystem (pandas, plotly, typer, FastAPI) |
 
 ## Sample Data
@@ -303,7 +331,7 @@ Requires [Nix](https://nixos.org/) with flakes enabled.
 nix develop                  # Enter dev shell (Rust, Python 3.13, maturin, uv)
 make setup                   # Install Python deps + build Rust extension
 make build                   # Recompile Rust, install into venv
-make test                    # 35 Rust + 180 Python = 215 tests
+make test                    # 35 Rust + 211 Python = 246 tests
 make lint                    # cargo clippy + cargo fmt --check
 python analysis/accuracy_report.py   # Full analysis across all methods and timescales
 ```
@@ -358,7 +386,7 @@ pip install fatcrash[deep]   # Adds PyTorch dependency
 - Nielsen, M., Sornette, D. & Raissi, M. (2024). "Deep Learning for LPPLS: M-LNN and P-LNN." [arXiv:2405.12803](https://arxiv.org/abs/2405.12803) — **Implemented** (M-LNN, P-LNN)
 - Cao, G., Shao, L., Yan, H. & Geman, H. (2025). "HLPPL: Hyped LPPL with Dual-Stream Transformer." [arXiv:2510.10878](https://arxiv.org/abs/2510.10878) — **Implemented**
 - Ma, J. & Li, C. (2024). "Detecting Market Bubbles: A Generalized LPPLS Neural Network Model." *Economics Letters*, 244, 112003. [DOI:10.1016/j.econlet.2024.112003](https://doi.org/10.1016/j.econlet.2024.112003) — Future work (extends P-LNN, paywalled)
-- Lee, G., Jeong, M., Park, T. & Ahn, K. (2025). "More Than Ex-Post Fitting: LPPL and Its AI-Based Classification." *Humanities and Social Sciences Communications*, 12, 236. [DOI:10.1038/s41599-025-05920-7](https://doi.org/10.1038/s41599-025-05920-7) — Future work (DTCAI)
+- Lee, G., Jeong, M., Park, T. & Ahn, K. (2025). "More Than Ex-Post Fitting: LPPL and Its AI-Based Classification." *Humanities and Social Sciences Communications*, 12, 236. [DOI:10.1038/s41599-025-05920-7](https://doi.org/10.1038/s41599-025-05920-7) — **Implemented** (DTCAI)
 - Sakurai, Y. & Chen, Z. (2024). "Forecasting Tail Risk via Neural Networks with Asymptotic Expansions." *IMF Working Paper* WP/24/99. [IMF](https://www.imf.org/en/Publications/WP/Issues/2024/05/10/Forecasting-Tail-Risk-via-Neural-Networks-with-Asymptotic-Expansions-548841) — Future work (CoFiE-NN, VaR-focused)
 
 ### Fat Tails in Finance

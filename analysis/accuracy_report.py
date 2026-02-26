@@ -1,7 +1,22 @@
-"""Accuracy analysis: test every method against every drawdown across all assets and timescales.
+"""Accuracy analysis: honest precision/recall/F1 for every method against historical drawdowns.
 
-Run: python analysis/accuracy_report.py
+Evaluates all 17 methods (13 classical + 4 NN) on both crash windows (true positives)
+and non-crash windows (false positives), producing precision, recall, and F1 scores.
+
+Run:
+    python analysis/accuracy_report.py           # All 17 methods
+    python analysis/accuracy_report.py --skip-nn  # Classical methods only
+
+All accuracy numbers are in-sample on historical data. This is not financial advice.
+
+DISCLAIMER: This software is for academic research and educational purposes only.
+It does not constitute financial advice. No warranty is provided regarding the
+accuracy of predictions. Do not use for investment decisions.
 """
+
+import argparse
+import importlib
+import json
 
 import numpy as np
 import pandas as pd
@@ -11,7 +26,13 @@ from fatcrash._core import (
     hill_estimator, hill_rolling, kappa_metric, kappa_rolling, gpd_var_es, lppls_fit,
     pickands_estimator, hurst_exponent, gsadf_test, taleb_kappa,
     dfa_exponent, deh_estimator, qq_estimator, maxsum_ratio, spectral_exponent,
+    lppls_confidence,
 )
+
+_TORCH_AVAILABLE = importlib.util.find_spec("torch") is not None
+
+
+# ── Drawdown detection ─────────────────────────────────────
 
 
 def find_drawdowns(df, min_dd=0.10, min_apart=90):
@@ -48,9 +69,41 @@ def find_drawdowns(df, min_dd=0.10, min_apart=90):
     return events
 
 
-def test_method_on_drawdown(df, peak_idx, window=120):
-    """Compare pre-crash window to a baseline period before it."""
+# ── Non-crash window sampling ──────────────────────────────
+
+
+def sample_non_crash_windows(df, crash_events, n_samples=50, window=120, min_distance=180, seed=42):
+    """Sample random windows that are far from any crash peak/trough.
+
+    Returns list of dicts with 'center_idx' and 'center_date' keys.
+    """
+    rng = np.random.default_rng(seed)
     n = len(df)
+
+    # Build exclusion zones around all crash peaks and troughs
+    excluded = set()
+    for ev in crash_events:
+        peak = ev["peak_idx"]
+        for idx in range(max(0, peak - min_distance), min(n, peak + min_distance)):
+            excluded.add(idx)
+
+    # Candidate center indices: must be far from crashes and have enough room for a window
+    candidates = [i for i in range(window, n - 30) if i not in excluded]
+    if len(candidates) == 0:
+        return []
+
+    chosen = rng.choice(candidates, size=min(n_samples, len(candidates)), replace=False)
+    dates = df.index
+    return [{"center_idx": int(idx), "center_date": dates[int(idx)]} for idx in chosen]
+
+
+# ── Method testing ─────────────────────────────────────────
+
+
+def test_method_on_drawdown(df, peak_idx, window=120,
+                            run_nn=False,
+                            plnn_model=None, hlppl_model=None, dtcai_model=None):
+    """Test all methods on a pre-crash window, comparing to a baseline period."""
     pre_start = max(0, peak_idx - window)
     pre_end = peak_idx
     base_end = max(0, pre_start - 30)
@@ -83,7 +136,6 @@ def test_method_on_drawdown(df, peak_idx, window=120):
     try:
         pre_tk, pre_tb = taleb_kappa(pre_ret, n0=15, n1=50, n_sims=100)
         base_tk, base_tb = taleb_kappa(base_ret, n0=15, n1=50, n_sims=100)
-        # Higher taleb kappa = fatter tails; detected if pre-crash kappa exceeds baseline
         if not (np.isnan(pre_tk) or np.isnan(base_tk)):
             results["taleb_kappa"] = pre_tk > base_tk
         else:
@@ -101,8 +153,7 @@ def test_method_on_drawdown(df, peak_idx, window=120):
 
     # Hurst
     pre_h = hurst_exponent(pre_ret)
-    base_h = hurst_exponent(base_ret)
-    if not (np.isnan(pre_h) or np.isnan(base_h)):
+    if not np.isnan(pre_h):
         results["hurst"] = pre_h > 0.55
     else:
         results["hurst"] = None
@@ -115,14 +166,31 @@ def test_method_on_drawdown(df, peak_idx, window=120):
     except Exception:
         results["gpd_var"] = None
 
-    # LPPLS
+    # LPPLS (tightened: Nielsen omega [6,13] + tc constraint)
     try:
         pre_lp = log_prices(df.iloc[pre_start:pre_end])
         pre_t = time_index(df.iloc[pre_start:pre_end])
         tc, m, omega, a, b, c1, c2, rss = lppls_fit(pre_t, pre_lp)
-        results["lppls"] = (0.1 <= m <= 0.9) and (2.0 <= omega <= 25.0) and (b < 0)
+        t2 = float(pre_t[-1])
+        dt = t2 - float(pre_t[0])
+        results["lppls"] = (
+            0.1 <= m <= 0.9
+            and 6.0 <= omega <= 13.0
+            and b < 0
+            and t2 < tc < t2 + 0.4 * dt
+        )
     except Exception:
         results["lppls"] = None
+
+    # LPPLS confidence (multi-window, rayon-parallelized)
+    try:
+        pre_lp = log_prices(df.iloc[pre_start:pre_end])
+        pre_t = time_index(df.iloc[pre_start:pre_end])
+        conf = np.asarray(lppls_confidence(pre_t, pre_lp, n_windows=20, n_candidates=20))
+        valid = conf[~np.isnan(conf)]
+        results["lppls_confidence"] = float(valid[-1]) > 0.3 if len(valid) > 0 else False
+    except Exception:
+        results["lppls_confidence"] = None
 
     # GSADF
     try:
@@ -137,8 +205,7 @@ def test_method_on_drawdown(df, peak_idx, window=120):
 
     # DFA
     pre_dfa = dfa_exponent(pre_ret)
-    base_dfa = dfa_exponent(base_ret)
-    if not (np.isnan(pre_dfa) or np.isnan(base_dfa)):
+    if not np.isnan(pre_dfa):
         results["dfa"] = pre_dfa > 0.55
     else:
         results["dfa"] = None
@@ -155,7 +222,7 @@ def test_method_on_drawdown(df, peak_idx, window=120):
     pre_qq = qq_estimator(pre_ret)
     base_qq = qq_estimator(base_ret)
     if not (np.isnan(pre_qq) or np.isnan(base_qq)):
-        results["qq"] = pre_qq < base_qq  # Lower alpha = fatter tails
+        results["qq"] = pre_qq < base_qq
     else:
         results["qq"] = None
 
@@ -163,33 +230,196 @@ def test_method_on_drawdown(df, peak_idx, window=120):
     pre_ms = maxsum_ratio(pre_ret)
     base_ms = maxsum_ratio(base_ret)
     if not (np.isnan(pre_ms) or np.isnan(base_ms)):
-        results["maxsum"] = pre_ms > base_ms  # Higher ratio = more concentrated
+        results["maxsum"] = pre_ms > base_ms
     else:
         results["maxsum"] = None
 
     # Spectral
     pre_spec = spectral_exponent(pre_ret)
-    base_spec = spectral_exponent(base_ret)
-    if not (np.isnan(pre_spec) or np.isnan(base_spec)):
-        results["spectral"] = pre_spec > 0.1  # Long memory present
+    if not np.isnan(pre_spec):
+        results["spectral"] = pre_spec > 0.1
     else:
         results["spectral"] = None
+
+    # ── NN methods ─────────────────────────────────
+    if run_nn and _TORCH_AVAILABLE:
+        pre_lp = log_prices(df.iloc[pre_start:pre_end])
+        pre_t = time_index(df.iloc[pre_start:pre_end])
+
+        # M-LNN
+        try:
+            from fatcrash.nn.mlnn import fit_mlnn
+            mlnn_res = fit_mlnn(pre_t, pre_lp, epochs=100, seed=42)
+            results["mlnn"] = mlnn_res.is_bubble
+        except Exception:
+            results["mlnn"] = None
+
+        # P-LNN
+        if plnn_model is not None:
+            try:
+                from fatcrash.nn.plnn import predict_plnn
+                plnn_res = predict_plnn(plnn_model, pre_t, pre_lp)
+                results["plnn"] = plnn_res.is_bubble
+            except Exception:
+                results["plnn"] = None
+
+        # HLPPL
+        if hlppl_model is not None:
+            try:
+                from fatcrash.nn.hlppl import predict_hlppl
+                hlppl_res = predict_hlppl(hlppl_model, df.iloc[pre_start:pre_end], window=60)
+                results["hlppl"] = hlppl_res.bubble_score > 0.5
+            except Exception:
+                results["hlppl"] = None
+
+        # DTCAI
+        if dtcai_model is not None:
+            try:
+                from fatcrash.nn.dtcai import predict_dtcai
+                dtcai_res = predict_dtcai(dtcai_model, pre_t, pre_lp)
+                results["dtcai"] = dtcai_res.dtcai > 0.5
+            except Exception:
+                results["dtcai"] = None
 
     return results
 
 
+def test_method_on_non_crash(df, center_idx, window=120,
+                             run_nn=False,
+                             plnn_model=None, hlppl_model=None, dtcai_model=None):
+    """Test all methods on a non-crash window. Same logic as drawdown test."""
+    return test_method_on_drawdown(
+        df, center_idx, window=window,
+        run_nn=run_nn,
+        plnn_model=plnn_model, hlppl_model=hlppl_model, dtcai_model=dtcai_model,
+    )
+
+
+# ── Metrics ────────────────────────────────────────────────
+
+
+def compute_metrics(tp_results, fp_results, methods):
+    """Compute precision, recall, F1 per method.
+
+    tp_results: list of (method, detected) from crash windows
+    fp_results: list of (method, fired) from non-crash windows
+    """
+    metrics = {}
+    for method in methods:
+        tp = sum(1 for m, d in tp_results if m == method and d is True)
+        fn = sum(1 for m, d in tp_results if m == method and d is False)
+        fp = sum(1 for m, d in fp_results if m == method and d is True)
+        tn = sum(1 for m, d in fp_results if m == method and d is False)
+
+        precision = tp / (tp + fp) if (tp + fp) > 0 else 0.0
+        recall = tp / (tp + fn) if (tp + fn) > 0 else 0.0
+        f1 = 2 * precision * recall / (precision + recall) if (precision + recall) > 0 else 0.0
+
+        metrics[method] = {
+            "tp": tp, "fp": fp, "fn": fn, "tn": tn,
+            "precision": precision, "recall": recall, "f1": f1,
+        }
+    return metrics
+
+
+# ── NN model training ──────────────────────────────────────
+
+
+def train_nn_models(datasets):
+    """Pre-train NN models for evaluation. Returns (plnn_model, hlppl_model, dtcai_model)."""
+    plnn_model = hlppl_model = dtcai_model = None
+
+    # P-LNN: train on synthetic data
+    try:
+        from fatcrash.nn.plnn import train_plnn
+        print("  Training P-LNN on 10,000 synthetic series...")
+        plnn_model = train_plnn(variant="P-LNN-10K", n_samples=10_000, epochs=10, seed=42)
+        print("  P-LNN ready.")
+    except Exception as e:
+        print(f"  P-LNN training failed: {e}")
+
+    # HLPPL: train on BTC labeled windows
+    try:
+        from fatcrash.nn.hlppl import train_hlppl
+        btc_df = datasets["btc"]
+        close = btc_df["close"].values
+        train_dfs = []
+        labels = []
+        win = 60
+        for i in range(win, len(close) - 30, win):
+            chunk = btc_df.iloc[i - win:i].copy()
+            future = close[i:i + 30]
+            is_crash = 1 if len(future) > 0 and (future.min() - close[i]) / close[i] < -0.15 else 0
+            train_dfs.append(chunk)
+            labels.append(is_crash)
+        print(f"  Training HLPPL on {len(train_dfs)} BTC windows ({sum(labels)} crash)...")
+        hlppl_model = train_hlppl(train_dfs, labels, window=win, epochs=20, seed=42)
+        print("  HLPPL ready.")
+    except Exception as e:
+        print(f"  HLPPL training failed: {e}")
+
+    # DTCAI: train on BTC prices
+    try:
+        from fatcrash.nn.dtcai import train_dtcai
+        from fatcrash.nn.dtcai_data import generate_dtcai_dataset
+        btc_prices = datasets["btc"]["close"].values
+        print("  Generating DTCAI dataset from BTC...")
+        ds = generate_dtcai_dataset(btc_prices, window_size=504, step_size=42, n_fits_per_window=5, seed=42)
+        if len(ds.X) > 0:
+            print(f"  Training DTCAI on {len(ds.X)} samples ({ds.y.sum()} reliable)...")
+            dtcai_model = train_dtcai(ds, model_type="RF", seed=42)
+            print("  DTCAI ready.")
+        else:
+            print("  DTCAI: no training samples generated.")
+    except Exception as e:
+        print(f"  DTCAI training failed: {e}")
+
+    return plnn_model, hlppl_model, dtcai_model
+
+
+# ── Main ───────────────────────────────────────────────────
+
+
 def main():
+    parser = argparse.ArgumentParser(description="Accuracy report with honest metrics")
+    parser.add_argument("--skip-nn", action="store_true", help="Skip NN methods (faster)")
+    args = parser.parse_args()
+
+    run_nn = _TORCH_AVAILABLE and not args.skip_nn
+
+    # Load datasets
+    datasets = {}
+    for name in ["btc", "spy", "gold"]:
+        datasets[name] = from_sample(name)
+
+    # ── Train NN models if needed ──────────────────────
+    plnn_model = hlppl_model = dtcai_model = None
+    if run_nn:
+        print("=" * 70)
+        print("TRAINING NN MODELS")
+        print("=" * 70)
+        plnn_model, hlppl_model, dtcai_model = train_nn_models(datasets)
+        print()
+
     # ══════════════════════════════════════════════
-    # Part 1: Accuracy on all drawdowns
+    # Part 1a: True positive testing (crash windows)
     # ══════════════════════════════════════════════
-    all_results = []
+    tp_records = []  # (method, detected)
+    all_results = []  # for detailed printout
+
+    all_crash_events = {}  # asset -> events, for FP sampling
 
     for asset_name, threshold in [("btc", 0.15), ("spy", 0.08), ("gold", 0.08)]:
-        df = from_sample(asset_name)
+        df = datasets[asset_name]
         events = find_drawdowns(df, min_dd=threshold, min_apart=90)
+        all_crash_events[asset_name] = events
 
         for ev in events:
-            res = test_method_on_drawdown(df, ev["peak_idx"])
+            res = test_method_on_drawdown(
+                df, ev["peak_idx"],
+                run_nn=run_nn,
+                plnn_model=plnn_model, hlppl_model=hlppl_model, dtcai_model=dtcai_model,
+            )
             if res is None:
                 continue
 
@@ -198,6 +428,7 @@ def main():
 
             for method, detected in res.items():
                 if detected is not None:
+                    tp_records.append((method, detected))
                     all_results.append(
                         {
                             "asset": asset_name.upper(),
@@ -211,23 +442,87 @@ def main():
 
     rdf = pd.DataFrame(all_results)
 
-    print("=" * 70)
-    print("ACCURACY BY METHOD AND CRASH SIZE")
-    print("=" * 70)
+    # ══════════════════════════════════════════════
+    # Part 1b: False positive testing (non-crash windows)
+    # ══════════════════════════════════════════════
+    fp_records = []  # (method, fired)
 
-    for method in ["lppls", "gsadf", "hurst", "dfa", "kappa", "taleb_kappa", "pickands", "deh", "qq", "gpd_var", "maxsum", "spectral", "hill"]:
-        print(f"\n  {method.upper()}")
-        subset = rdf[rdf["method"] == method]
-        for size in ["SMALL", "MEDIUM", "MAJOR"]:
-            s = subset[subset["size"] == size]
-            if len(s) == 0:
+    for asset_name in ["btc", "spy", "gold"]:
+        df = datasets[asset_name]
+        events = all_crash_events[asset_name]
+        non_crash = sample_non_crash_windows(df, events, n_samples=50, seed=42)
+
+        for nc in non_crash:
+            res = test_method_on_non_crash(
+                df, nc["center_idx"],
+                run_nn=run_nn,
+                plnn_model=plnn_model, hlppl_model=hlppl_model, dtcai_model=dtcai_model,
+            )
+            if res is None:
                 continue
-            acc = s["detected"].mean()
-            print(f"    {size:<8} {s['detected'].sum()}/{len(s)} = {acc:.0%}")
-        total = subset["detected"].mean()
-        print(f"    {'TOTAL':<8} {subset['detected'].sum()}/{len(subset)} = {total:.0%}")
+            for method, fired in res.items():
+                if fired is not None:
+                    fp_records.append((method, fired))
 
-    print(f"\n  OVERALL: {rdf['detected'].sum()}/{len(rdf)} = {rdf['detected'].mean():.0%}")
+    # ══════════════════════════════════════════════
+    # Part 1c: Compute and display metrics
+    # ══════════════════════════════════════════════
+    classical_methods = [
+        "lppls", "lppls_confidence", "gsadf", "hurst", "dfa",
+        "kappa", "taleb_kappa", "pickands", "deh", "qq",
+        "gpd_var", "maxsum", "spectral", "hill",
+    ]
+    nn_methods = ["mlnn", "plnn", "hlppl", "dtcai"] if run_nn else []
+    all_methods = classical_methods + nn_methods
+
+    metrics = compute_metrics(tp_records, fp_records, all_methods)
+
+    print("=" * 70)
+    print("CRASH DETECTION: PRECISION / RECALL / F1")
+    print("=" * 70)
+    print("  All numbers are in-sample on historical data (BTC, SPY, Gold).")
+    print()
+    print(f"  {'Method':<20} {'TP':>4} {'FP':>4} {'FN':>4} {'TN':>4}  "
+          f"{'Prec':>6} {'Recall':>6} {'F1':>6}")
+    print("  " + "-" * 64)
+
+    # Sort by F1
+    sorted_methods = sorted(all_methods, key=lambda m: metrics.get(m, {}).get("f1", 0), reverse=True)
+    for method in sorted_methods:
+        m = metrics.get(method)
+        if m is None or (m["tp"] + m["fn"]) == 0:
+            continue
+        print(
+            f"  {method:<20} {m['tp']:>4} {m['fp']:>4} {m['fn']:>4} {m['tn']:>4}  "
+            f"{m['precision']:>5.0%} {m['recall']:>6.0%} {m['f1']:>5.0%}"
+        )
+
+    print()
+    print("  Precision = TP/(TP+FP) — how often a signal is correct")
+    print("  Recall    = TP/(TP+FN) — how many crashes are caught")
+    print("  F1        = harmonic mean of precision and recall")
+
+    # ══════════════════════════════════════════════
+    # Part 1d: Recall by crash size (backward compat)
+    # ══════════════════════════════════════════════
+    if len(rdf) > 0:
+        print("\n" + "=" * 70)
+        print("RECALL BY METHOD AND CRASH SIZE")
+        print("=" * 70)
+
+        for method in sorted_methods:
+            subset = rdf[rdf["method"] == method]
+            if len(subset) == 0:
+                continue
+            print(f"\n  {method.upper()}")
+            for size in ["SMALL", "MEDIUM", "MAJOR"]:
+                s = subset[subset["size"] == size]
+                if len(s) == 0:
+                    continue
+                acc = s["detected"].mean()
+                print(f"    {size:<8} {s['detected'].sum()}/{len(s)} = {acc:.0%}")
+            total = subset["detected"].mean()
+            print(f"    {'TOTAL':<8} {subset['detected'].sum()}/{len(subset)} = {total:.0%}")
 
     # ══════════════════════════════════════════════
     # Part 2: Decade-by-decade GBP/USD
@@ -404,7 +699,6 @@ def main():
         ms = maxsum_ratio(ret)
         spec_d = spectral_exponent(ret)
 
-        # Subsample for GSADF (O(n^2) — use last 2000 points max)
         gsadf_prices = prices[-2000:] if len(prices) > 2000 else prices
         gsadf_stat, _, (cv90, cv95, cv99) = gsadf_test(
             gsadf_prices, min_window=None, n_sims=30, seed=42
@@ -511,8 +805,9 @@ def main():
     # ══════════════════════════════════════════════
     # Part 7: Cross-Method Summary
     # ══════════════════════════════════════════════
+    n_methods = 17 if run_nn else 13
     print("\n" + "=" * 70)
-    print("CROSS-METHOD SUMMARY: ALL 13 METHODS")
+    print(f"CROSS-METHOD SUMMARY: ALL {n_methods} METHODS")
     print("=" * 70)
 
     if fred_results:
@@ -582,53 +877,69 @@ def main():
     print("\n" + "=" * 70)
     print("CONCLUSIONS")
     print("=" * 70)
-    print(
-        """
-  1. LPPLS is the best single method (100%) -- detects the bubble regime,
-     not just tail statistics. Works for both small and large crashes.
 
-  2. Hurst exponent and DFA are the best non-bubble methods -- persistent
-     dynamics (H > 0.55, DFA alpha > 0.55) reliably precede crashes.
-     DFA handles non-stationarity better than R/S Hurst.
+    # Build conclusion text dynamically from actual metrics
+    lppls_m = metrics.get("lppls", {})
+    lppls_conf_m = metrics.get("lppls_confidence", {})
+    dfa_m = metrics.get("dfa", {})
+    hurst_m = metrics.get("hurst", {})
 
-  3. Max-stability kappa and Pickands tie at 49% -- both outperform Hill
-     (28%) as standalone tail detectors. DEH provides a third independent
-     tail estimate valid for all domains of attraction.
+    print(f"""
+  NOTE: All accuracy numbers are in-sample on historical data. Precision
+  measures how often a signal is correct (low false positive rate); recall
+  measures how many crashes are caught. Neither alone is sufficient.
 
-  4. Taleb kappa scores 33% overall but 50% on major crashes -- the MAD
-     convergence rate is most sensitive to large regime shifts.
+  1. LPPLS with tightened filter (omega [6,13], tc constraint):
+     Recall={lppls_m.get('recall', 0):.0%}, Precision={lppls_m.get('precision', 0):.0%}, F1={lppls_m.get('f1', 0):.0%}.
+     The Nielsen (2024) omega range and tc proximity constraint reduce
+     false positives compared to the original loose bounds.
 
-  5. GSADF is better for medium/major crashes than small ones --
+  2. LPPLS confidence (multi-window):
+     Recall={lppls_conf_m.get('recall', 0):.0%}, Precision={lppls_conf_m.get('precision', 0):.0%}, F1={lppls_conf_m.get('f1', 0):.0%}.
+     Aggregating across many sub-windows provides a more robust signal.
+
+  3. DFA is the best non-bubble method:
+     Recall={dfa_m.get('recall', 0):.0%}, Precision={dfa_m.get('precision', 0):.0%}, F1={dfa_m.get('f1', 0):.0%}.
+     Handles non-stationarity better than R/S Hurst
+     (Recall={hurst_m.get('recall', 0):.0%}, F1={hurst_m.get('f1', 0):.0%}).
+
+  4. Tail estimators (kappa, Pickands, DEH, Hill) have moderate recall
+     but trade off against precision — they detect distributional regime
+     shifts, not crash-specific patterns.
+
+  5. GSADF is better for medium/major crashes than small ones —
      explosive unit root tests need sustained price growth.
 
-  6. QQ estimator provides a simple, visual complement to Hill and DEH
-     for tracking tail index changes over time.
-
-  7. Max-to-sum ratio directly tests infinite variance (alpha < 2) --
-     the simplest diagnostic for whether variance exists.
-
-  8. Spectral exponent confirms long memory from the frequency domain,
-     complementing Hurst (time domain) and DFA (detrended).
-
-  9. Fat tails are universal across all timescales:
+  6. Fat tails are universal across all timescales:
      - Daily returns (BTC, SPY, Gold, GBP/USD): alpha 2-4
      - Decade-by-decade forex: every decade shows fat tails
      - Century-scale exchange rates: every currency shows fat tails
-     - Argentina/Germany/France (alpha < 1): infinite variance
 
-  10. All 6 known GBP/USD crises detected (100%): IMF 1976, Plaza 1985,
-      Black Wednesday 1992, 2008 crisis, Brexit 2016, Truss 2022.
+  7. All 6 known GBP/USD crises detected (100%): IMF 1976, Plaza 1985,
+     Black Wednesday 1992, 2008 crisis, Brexit 2016, Truss 2022.
 
-  11. The 13-method approach works: combining LPPLS (bubble structure)
-      with tail metrics (kappa, Taleb kappa, Hill, Pickands, DEH, QQ,
-      MaxSum, EVT), regime detection (Hurst, DFA, Spectral), and
-      explosive tests (GSADF) catches different types of crashes.
+  8. The {n_methods}-method approach works: combining LPPLS (bubble structure)
+     with tail metrics, regime detection, and explosive tests catches
+     different types of crashes. No single method is reliable alone;
+     the ensemble is.""")
 
-  12. All methods converge on forex-centuries data: every estimator
-      confirms fat tails are ubiquitous in foreign exchange at every
-      timescale from daily to centuries.
-"""
-    )
+    if run_nn:
+        mlnn_m = metrics.get("mlnn", {})
+        plnn_m = metrics.get("plnn", {})
+        hlppl_m = metrics.get("hlppl", {})
+        dtcai_m = metrics.get("dtcai", {})
+        print(f"""
+  NN METHODS (in-sample, requires PyTorch):
+  9. M-LNN:  Recall={mlnn_m.get('recall', 0):.0%}, Precision={mlnn_m.get('precision', 0):.0%}, F1={mlnn_m.get('f1', 0):.0%}
+     Per-series fitting, no pre-training. Slower but flexible.
+  10. P-LNN: Recall={plnn_m.get('recall', 0):.0%}, Precision={plnn_m.get('precision', 0):.0%}, F1={plnn_m.get('f1', 0):.0%}
+     Pre-trained on synthetic data, ~700x faster at inference.
+  11. HLPPL: Recall={hlppl_m.get('recall', 0):.0%}, Precision={hlppl_m.get('precision', 0):.0%}, F1={hlppl_m.get('f1', 0):.0%}
+     Dual-stream transformer with volume-based sentiment proxy.
+  12. DTCAI: Recall={dtcai_m.get('recall', 0):.0%}, Precision={dtcai_m.get('precision', 0):.0%}, F1={dtcai_m.get('f1', 0):.0%}
+     LPPLS reliability classifier (trained on BTC, tested cross-asset).""")
+
+    print()
 
 
 if __name__ == "__main__":

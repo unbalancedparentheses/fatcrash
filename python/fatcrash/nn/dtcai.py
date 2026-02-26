@@ -16,7 +16,7 @@ accuracy of predictions. Do not use for investment decisions.
 
 from __future__ import annotations
 
-import importlib
+import importlib.util
 import json
 import pickle
 from dataclasses import dataclass

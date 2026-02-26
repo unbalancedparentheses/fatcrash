@@ -9,7 +9,7 @@ accuracy of predictions. Do not use for investment decisions.
 
 from __future__ import annotations
 
-import importlib
+import importlib.util
 
 _TORCH_AVAILABLE = importlib.util.find_spec("torch") is not None
 

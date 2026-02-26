@@ -187,13 +187,14 @@ def test_method_on_drawdown(df, peak_idx, window=120,
     try:
         pre_lp = log_prices(df.iloc[pre_start:pre_end])
         pre_t = time_index(df.iloc[pre_start:pre_end])
-        tc, m, omega, a, b, c1, c2, rss = lppls_fit(pre_t, pre_lp)
+        tc, m, omega, a, b, c1, c2, rss, r2 = lppls_fit(pre_t, pre_lp)
         t2 = float(pre_t[-1])
         dt = t2 - float(pre_t[0])
         results["lppls"] = (
             0.1 <= m <= 0.9
             and 6.0 <= omega <= 13.0
             and b < 0
+            and r2 >= 0.80
             and t2 < tc < t2 + 0.4 * dt
         )
         lppls_tc = tc
@@ -207,12 +208,17 @@ def test_method_on_drawdown(df, peak_idx, window=120,
     try:
         pre_lp = log_prices(df.iloc[pre_start:pre_end])
         pre_t = time_index(df.iloc[pre_start:pre_end])
-        conf = np.asarray(lppls_confidence(pre_t, pre_lp, n_windows=20, n_candidates=20))
+        conf_arr, tc_mean_arr, tc_std_arr = lppls_confidence(pre_t, pre_lp, n_windows=20, n_candidates=20)
+        conf = np.asarray(conf_arr)
+        tc_std = np.asarray(tc_std_arr)
         valid = conf[~np.isnan(conf)]
         if len(valid) > 0:
             conf_val = float(valid[-1])
-            results["lppls_confidence"] = conf_val > 0.3
-            components["lppls_confidence"] = sig.lppls_confidence_signal(conf_val)
+            # Discount confidence by tc dispersion
+            last_tc_std = float(tc_std[~np.isnan(tc_std)][-1]) if np.any(~np.isnan(tc_std)) else 0.0
+            adjusted = conf_val * max(0.0, 1.0 - last_tc_std / 100.0)
+            results["lppls_confidence"] = adjusted > 0.3
+            components["lppls_confidence"] = sig.lppls_confidence_signal(adjusted)
         else:
             results["lppls_confidence"] = False
     except Exception:

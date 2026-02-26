@@ -4,7 +4,9 @@ use rand::prelude::*;
 use rand_distr::StandardNormal;
 
 use super::filter::{passes_filter, FilterConfig};
-use super::model::{solve_linear, LpplsParams};
+use super::model::{r_squared, solve_linear, LpplsParams};
+
+const MIN_R_SQUARED: f64 = 0.80;
 
 /// CMA-ES for LPPLS nonlinear parameter search.
 /// Proper implementation: Gaussian sampling, covariance matrix adaptation,
@@ -25,12 +27,12 @@ fn search_lppls(
     pop_size: usize,
     n_generations: usize,
     seed: u64,
-) -> Option<(LpplsParams, f64)> {
+) -> Option<(LpplsParams, f64, f64)> {
     let mut rng = StdRng::seed_from_u64(seed);
     let filter_config = FilterConfig::default();
 
-    let mut best_filtered: Option<(LpplsParams, f64)> = None;
-    let mut best_unfiltered: Option<(LpplsParams, f64)> = None;
+    let mut best_filtered: Option<(LpplsParams, f64, f64)> = None;
+    let mut best_unfiltered: Option<(LpplsParams, f64, f64)> = None;
 
     // CMA-ES state
     let dim = 3;
@@ -76,6 +78,7 @@ fn search_lppls(
             let omega = x[2];
 
             if let Some((a, b, c1, c2, rss)) = solve_linear(times, log_prices, tc, m, omega) {
+                let r2 = r_squared(log_prices, rss);
                 let params = LpplsParams {
                     tc,
                     m,
@@ -87,24 +90,26 @@ fn search_lppls(
                 };
                 candidates.push((x, rss, z));
 
-                if passes_filter(&params, &filter_config) {
+                if r2 >= MIN_R_SQUARED
+                    && passes_filter(&params, &filter_config, times[0], *times.last().unwrap())
+                {
                     match &best_filtered {
-                        Some((_, prev_rss)) if rss < *prev_rss => {
-                            best_filtered = Some((params.clone(), rss));
+                        Some((_, prev_rss, _)) if rss < *prev_rss => {
+                            best_filtered = Some((params.clone(), rss, r2));
                         }
                         None => {
-                            best_filtered = Some((params.clone(), rss));
+                            best_filtered = Some((params.clone(), rss, r2));
                         }
                         _ => {}
                     }
                 }
 
                 match &best_unfiltered {
-                    Some((_, prev_rss)) if rss < *prev_rss => {
-                        best_unfiltered = Some((params, rss));
+                    Some((_, prev_rss, _)) if rss < *prev_rss => {
+                        best_unfiltered = Some((params, rss, r2));
                     }
                     None => {
-                        best_unfiltered = Some((params, rss));
+                        best_unfiltered = Some((params, rss, r2));
                     }
                     _ => {}
                 }
@@ -160,7 +165,7 @@ fn search_lppls(
 }
 
 /// Fit LPPLS model to log-price time series.
-/// Returns (tc, m, omega, a, b, c1, c2, rss) or raises error.
+/// Returns (tc, m, omega, a, b, c1, c2, rss, r2) or raises error.
 #[allow(clippy::type_complexity)]
 #[pyfunction]
 #[pyo3(signature = (times, log_prices, tc_range=None, pop_size=50, n_generations=40, seed=42))]
@@ -172,7 +177,7 @@ pub fn lppls_fit(
     pop_size: Option<usize>,
     n_generations: Option<usize>,
     seed: Option<u64>,
-) -> PyResult<(f64, f64, f64, f64, f64, f64, f64, f64)> {
+) -> PyResult<(f64, f64, f64, f64, f64, f64, f64, f64, f64)> {
     let times = times.as_slice()?;
     let log_prices = log_prices.as_slice()?;
 
@@ -185,7 +190,7 @@ pub fn lppls_fit(
     let t_end = *times.last().unwrap();
     let t_range = times.last().unwrap() - times.first().unwrap();
 
-    let (tc_min, tc_max) = tc_range.unwrap_or((t_end, t_end + t_range * 0.5));
+    let (tc_min, tc_max) = tc_range.unwrap_or((t_end, t_end + t_range * 0.2));
 
     let bounds = SearchBounds {
         tc_min,
@@ -201,7 +206,7 @@ pub fn lppls_fit(
     let seed = seed.unwrap_or(42);
 
     match search_lppls(times, log_prices, &bounds, pop_size, n_generations, seed) {
-        Some((p, rss)) => Ok((p.tc, p.m, p.omega, p.a, p.b, p.c1, p.c2, rss)),
+        Some((p, rss, r2)) => Ok((p.tc, p.m, p.omega, p.a, p.b, p.c1, p.c2, rss, r2)),
         None => Err(pyo3::exceptions::PyRuntimeError::new_err(
             "LPPLS fitting failed to converge",
         )),

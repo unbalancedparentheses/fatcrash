@@ -8,6 +8,7 @@ pub struct FilterConfig {
     pub omega_min: f64,
     pub omega_max: f64,
     pub max_damping: f64,
+    pub min_oscillations: f64,
 }
 
 impl Default for FilterConfig {
@@ -17,13 +18,21 @@ impl Default for FilterConfig {
             m_max: 0.9,
             omega_min: 6.0,
             omega_max: 13.0,
-            max_damping: 1.0,
+            max_damping: 0.7,
+            min_oscillations: 2.5,
         }
     }
 }
 
 /// Check if LPPLS parameters pass Sornette's qualifying constraints.
-pub fn passes_filter(params: &LpplsParams, config: &FilterConfig) -> bool {
+/// `t_start` and `t_end` are the first and last time values of the fitting window,
+/// used for the oscillation count check.
+pub fn passes_filter(
+    params: &LpplsParams,
+    config: &FilterConfig,
+    t_start: f64,
+    t_end: f64,
+) -> bool {
     // 1. m in [0.1, 0.9]
     if params.m < config.m_min || params.m > config.m_max {
         return false;
@@ -48,11 +57,17 @@ pub fn passes_filter(params: &LpplsParams, config: &FilterConfig) -> bool {
         }
     }
 
+    // 5. Minimum oscillations in the fitting window
+    let n_osc = count_oscillations(params, t_start, t_end);
+    if n_osc < config.min_oscillations {
+        return false;
+    }
+
     true
 }
 
 /// Count number of oscillations in the fit window.
-pub fn _count_oscillations(params: &LpplsParams, t_start: f64, t_end: f64) -> f64 {
+pub fn count_oscillations(params: &LpplsParams, t_start: f64, t_end: f64) -> f64 {
     let dt_start = params.tc - t_start;
     let dt_end = params.tc - t_end;
     if dt_start <= 0.0 || dt_end <= 0.0 {

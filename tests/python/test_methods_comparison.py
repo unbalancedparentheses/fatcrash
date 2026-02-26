@@ -175,10 +175,11 @@ class TestLPPLSAcrossAssets:
         # Use last 200 points
         t_slice = t[-200:]
         lp_slice = lp[-200:]
-        tc, m, omega, a, b, c1, c2, rss = lppls_fit(t_slice, lp_slice)
+        tc, m, omega, a, b, c1, c2, rss, r2 = lppls_fit(t_slice, lp_slice)
         assert not np.isnan(tc), f"{asset_name}: tc is NaN"
         assert 0.0 < m < 1.0, f"{asset_name}: m out of range: {m}"
         assert rss >= 0, f"{asset_name}: RSS negative"
+        assert 0.0 <= r2 <= 1.0, f"{asset_name}: R² out of range: {r2}"
 
 
 class TestDFAAcrossAssets:

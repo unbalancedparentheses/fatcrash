@@ -150,7 +150,7 @@ def lppls_fit(
     pop_size: int | None = 50,
     n_generations: int | None = 40,
     seed: int | None = 42,
-) -> tuple[float, float, float, float, float, float, float, float]: ...
+) -> tuple[float, float, float, float, float, float, float, float, float]: ...
 
 def lppls_confidence(
     times: npt.NDArray[np.float64],
@@ -159,7 +159,7 @@ def lppls_confidence(
     max_window: int | None = 750,
     n_windows: int | None = 50,
     n_candidates: int | None = 30,
-) -> npt.NDArray[np.float64]: ...
+) -> tuple[npt.NDArray[np.float64], npt.NDArray[np.float64], npt.NDArray[np.float64]]: ...
 
 # Multiscale
 def multiscale_signals(

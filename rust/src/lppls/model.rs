@@ -102,6 +102,17 @@ pub fn solve_linear(
     Some((a, b, c1, c2, rss))
 }
 
+/// Compute R² (coefficient of determination) from log prices and RSS.
+pub fn r_squared(log_prices: &[f64], rss: f64) -> f64 {
+    let n = log_prices.len() as f64;
+    let mean = log_prices.iter().sum::<f64>() / n;
+    let tss: f64 = log_prices.iter().map(|&y| (y - mean).powi(2)).sum();
+    if tss <= 0.0 {
+        return 0.0;
+    }
+    1.0 - rss / tss
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

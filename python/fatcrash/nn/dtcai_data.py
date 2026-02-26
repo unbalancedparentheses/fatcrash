@@ -44,7 +44,7 @@ def _extract_features(
     Paper uses: (A, B, C, tc, phi, omega, beta)
     where C = sqrt(c1^2 + c2^2), phi = atan2(c2, c1), beta = m.
     """
-    tc, m, omega, a, b, c1, c2, _rss = fit_result
+    tc, m, omega, a, b, c1, c2, _rss, *_ = fit_result
     c = np.sqrt(c1**2 + c2**2)
     phi = np.arctan2(c2, c1)
     return np.array([a, b, c, tc, phi, omega, m], dtype=np.float64)

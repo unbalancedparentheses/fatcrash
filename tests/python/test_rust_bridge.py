@@ -250,7 +250,10 @@ class TestLPPLS:
         log_p = a + b * dt ** m
 
         result = lppls_fit(times, log_p, tc_range=(80.0, 120.0))
-        assert len(result) == 8
+        assert len(result) == 9
         tc_est = result[0]
+        r2 = result[8]
         # tc should be in reasonable range
         assert 70 < tc_est < 130
+        # R² should be between 0 and 1
+        assert 0.0 <= r2 <= 1.0

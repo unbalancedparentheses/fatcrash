@@ -136,7 +136,7 @@ def lppls_confidence_signal(confidence: float) -> float:
 def tc_proximity_signal(days_to_tc: float, max_days: float = 90.0) -> float:
     """Convert days-to-tc to urgency signal. Closer = higher."""
     if days_to_tc <= 0 or np.isnan(days_to_tc):
-        return 1.0
+        return 0.0
     return np.clip(1.0 - days_to_tc / max_days, 0.0, 1.0)
 
 

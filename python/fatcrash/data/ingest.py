@@ -204,6 +204,71 @@ def from_fred(
     return result
 
 
+_FOREX_CENTURIES_DIR = Path.home() / "projects" / "forex-centuries"
+_FRED_DAILY_DIR = _FOREX_CENTURIES_DIR / "data" / "sources" / "fred" / "daily"
+_FRED_SKIP = {"fred_usd_broad_index.csv", "fred_usd_major_index.csv"}
+# FRED quotes USD-per-foreign for these currencies; invert to get foreign-per-USD
+_FRED_USD_PER_FOREIGN = {"DEXUSUK", "DEXUSAL", "DEXUSNZ", "DEXUSEU"}
+
+
+def load_fred_forex(pair: str | None = None) -> dict[str, pd.DataFrame] | pd.DataFrame:
+    """Load FRED daily forex data from the forex-centuries repo.
+
+    Requires: git clone https://github.com/unbalancedparentheses/forex-centuries
+              into ~/projects/forex-centuries (or set FOREX_CENTURIES_DIR env var).
+
+    Args:
+        pair: Currency pair like "AUD_USD". If None, loads all 23 pairs.
+
+    Returns:
+        If pair is given, returns a single DataFrame with DatetimeIndex and 'close' column.
+        If pair is None, returns a dict mapping pair names to DataFrames.
+    """
+    import os
+
+    fred_dir = Path(os.environ.get("FOREX_CENTURIES_DIR", _FOREX_CENTURIES_DIR)) / "data" / "sources" / "fred" / "daily"
+    if not fred_dir.is_dir():
+        raise FileNotFoundError(
+            f"forex-centuries FRED data not found at {fred_dir}.\n"
+            "To get the data:\n"
+            "  git clone https://github.com/unbalancedparentheses/forex-centuries ~/projects/forex-centuries\n"
+            "Or set FOREX_CENTURIES_DIR to point to your clone."
+        )
+
+    def _load_one(csv_path: Path) -> pd.DataFrame:
+        raw = pd.read_csv(csv_path, na_values=["."])
+        date_col = "observation_date"
+        val_col = [c for c in raw.columns if c != date_col][0]
+        raw[date_col] = pd.to_datetime(raw[date_col], errors="coerce")
+        raw = raw.dropna(subset=[date_col])
+        raw[val_col] = pd.to_numeric(raw[val_col], errors="coerce")
+        raw = raw.dropna(subset=[val_col])
+        raw = raw[raw[val_col] > 0]
+        if val_col in _FRED_USD_PER_FOREIGN:
+            raw[val_col] = 1.0 / raw[val_col]
+        raw = raw.rename(columns={date_col: "date", val_col: "close"})
+        raw = raw.set_index("date").sort_index()
+        return raw[["close"]]
+
+    if pair is not None:
+        fname = f"fred_{pair.lower()}.csv"
+        path = fred_dir / fname
+        if not path.exists():
+            raise FileNotFoundError(f"FRED pair not found: {path}")
+        return _load_one(path)
+
+    result = {}
+    for csv_path in sorted(fred_dir.glob("fred_*.csv")):
+        if csv_path.name in _FRED_SKIP:
+            continue
+        name = csv_path.stem.replace("fred_", "").upper()
+        try:
+            result[name] = _load_one(csv_path)
+        except Exception:
+            continue
+    return result
+
+
 def from_sample(asset: str = "btc") -> pd.DataFrame:
     """Load bundled sample data (no internet needed).
 

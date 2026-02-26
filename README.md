@@ -4,7 +4,7 @@
 
 The median tail index across 138 countries is alpha = 1.57. Standard risk models assume finite variance (alpha > 2) and often finite kurtosis (alpha > 4). For the majority of the world's currencies, these assumptions are empirically false. fatcrash detects crashes by measuring what actually matters: the tail.
 
-Python + Rust (PyO3). 17 methods. 246 tests. 500 years of data.
+Python + Rust (PyO3). 19 methods. 293 tests. 500 years of data.
 
 ```python
 from fatcrash.data.ingest import from_sample
@@ -169,7 +169,7 @@ Summary across 30 countries:
 
 Germany, Austria, Argentina, and Portugal saturate at Taleb kappa = 1.0 — Cauchy-like behavior where the CLT does not operate at any practical sample size. Italy (H = 0.80, DFA = 1.44) and Portugal (H = 0.85) show the strongest persistence over century-scale data.
 
-## The 17 Methods
+## The 19 Methods
 
 ### Overview
 
@@ -185,13 +185,15 @@ Germany, Austria, Argentina, and Portugal saturate at Taleb kappa = 1.0 — Cauc
 | 8 | Hurst | Regime | Persistence via R/S analysis | H (> 0.5 = trending) |
 | 9 | DFA | Regime | Persistence, non-stationary-robust | alpha (> 0.5 = trending) |
 | 10 | Spectral | Regime | Long memory from frequency domain | d (> 0 = long memory) |
-| 11 | GPD | EVT | Tail risk (VaR, ES) | VaR, Expected Shortfall |
-| 12 | GEV | EVT | Block maxima classification | Frechet / Gumbel / Weibull |
-| 13 | LPPLS + GSADF | Bubble | Bubble shape + explosive unit roots | critical time, confidence |
-| 14 | M-LNN | Bubble (NN) | Per-series LPPLS via neural network | tc, m, omega, confidence |
-| 15 | P-LNN | Bubble (NN) | Pre-trained LPPLS (~700x faster) | tc, m, omega, confidence |
-| 16 | HLPPL | Bubble (NN) | Dual-stream transformer + sentiment | bubble score [0, 1] |
-| 17 | DTCAI | Bubble (NN) | LPPLS reliability classifier + DTC | DTCAI score [0, 1] |
+| 11 | Momentum | Regime | 3-12 month trailing return + reversal | momentum, reversal signal |
+| 12 | GPD | EVT | Tail risk (VaR, ES) | VaR, Expected Shortfall |
+| 13 | GEV | EVT | Block maxima classification | Frechet / Gumbel / Weibull |
+| 14 | LPPLS + GSADF | Bubble | Bubble shape + explosive unit roots | critical time, confidence |
+| 15 | M-LNN | Bubble (NN) | Per-series LPPLS via neural network | tc, m, omega, confidence |
+| 16 | P-LNN | Bubble (NN) | Pre-trained LPPLS (~700x faster) | tc, m, omega, confidence |
+| 17 | HLPPL | Bubble (NN) | Dual-stream transformer + sentiment | bubble score [0, 1] |
+| 18 | DTCAI | Bubble (NN) | LPPLS reliability classifier + DTC | DTCAI score [0, 1] |
+| 19 | Price velocity | Structure | Volatility acceleration (cascade detection) | velocity signal |
 
 ### Tail estimation
 
@@ -216,6 +218,16 @@ Germany, Austria, Argentina, and Portugal saturate at Taleb kappa = 1.0 — Cauc
 **DFA** (Peng et al., 1994). Detrended fluctuation analysis: divides into windows, removes linear trend per window, regresses log(RMS of residuals) vs log(window size). Handles non-stationarity better than R/S — best non-bubble crash detector (82% recall, 34% F1).
 
 **Spectral exponent** (Geweke & Porter-Hudak, 1983). Estimates long-memory parameter d from the periodogram near frequency zero: f(lambda) ~ |lambda|^(1-2d). Relation to Hurst: d = H - 0.5. Confirms persistence from the frequency domain.
+
+**Momentum** (Jegadeesh & Titman, 1993). Trailing log return over 3, 6, and 12-month windows. The strongest documented anomaly in finance: 3-12 month winners continue to outperform, generating ~9.5% cumulative excess returns. Momentum *reversal* — when long-term momentum is positive but short-term turns negative — is a crash precursor. The divergence between 12-month and 1-month momentum captures the transition from bubble buildup to unwind. Scowcroft & Sefton (2005) showed momentum is driven by industry effects in large-cap and stock-specific effects in small-cap.
+
+**Price velocity** (cascade detector). Rate of change of realized volatility: velocity = (vol[t] - vol[t-lag]) / vol[t-lag]. Detects forced-liquidation cascades where volatility itself accelerates — the signature of events like Volmageddon (Feb 5, 2018: XIV lost 97%, VIX spiked 116% in hours due to $5B in forced inverse-vol product rebalancing) or the Sep 2019 repo market blowup (collateral cleared at 600bps over, largest 1-day move on record). High positive velocity = cascade forming.
+
+### Constant volatility strategy
+
+Position sizing via inverse volatility targeting: weight = target_vol / realized_vol. Dalgaard (2016, CBS thesis) tested tail-hedging strategies on S&P 500 data and found that simple put monetization strategies do NOT reduce drawdowns and have LOWER returns/Sharpe than an unhedged index. The constant volatility strategy, however, DOES reduce drawdowns while earning higher returns — mechanically cutting exposure when vol spikes (exactly when cascades hit) and increasing exposure during calm periods.
+
+**Rebalance risk signal** (Rattray, Harvey & Van Hemert, 2018). Mechanical rebalancing is negative convexity — it buys into drawdowns that continue. When DFA detects trending behavior (alpha > 0.5) and momentum is negative (active drawdown), rebalancing into the position is dangerous. A 10% trend-following allocation reduces drawdowns by ~5 percentage points.
 
 ### Extreme value theory
 
@@ -275,8 +287,8 @@ Methods grouped into 4 independent categories. When 3+ categories agree, probabi
 |----------|---------|-----------------|
 | **Bubble** | LPPLS, GSADF, M-LNN, P-LNN, HLPPL, DTCAI | Super-exponential growth, explosive unit roots |
 | **Tail** | Hill, Pickands, DEH, QQ, Taleb Kappa, Max-Stability Kappa, Max-to-Sum, GPD | Tail thickening, distributional regime shifts |
-| **Regime** | Hurst, DFA, Spectral | Transition from mean-reverting to persistent dynamics |
-| **Structure** | Multiscale, LPPLS tc proximity | Cross-timeframe agreement, timing |
+| **Regime** | Hurst, DFA, Spectral, Momentum reversal | Transition from mean-reverting to persistent dynamics, trend breaks |
+| **Structure** | Multiscale, LPPLS tc proximity, Price velocity | Cross-timeframe agreement, timing, cascade detection |
 
 Indicators are also computed at daily, 3-day, and weekly frequencies. A signal at one scale may be noise; a signal across all three is structural.
 
@@ -330,8 +342,9 @@ Rust (PyO3, _core.so)                Python
 ┌────────────────────────────┐       ┌──────────────────────────────────┐
 │ Tail: Hill, Pickands, DEH, │       │ indicators/                      │
 │       QQ, Kappa, Taleb,    │──────▶│   tail_indicator.py              │
-│       MaxSum, Hurst, DFA,  │       │   lppls_indicator.py             │
-│       Spectral             │       │   bubble_indicator.py            │
+│       MaxSum, Hurst, DFA,  │       │   vol_indicator.py               │
+│       Spectral, Momentum,  │       │   lppls_indicator.py             │
+│       Velocity             │       │   bubble_indicator.py            │
 │                            │       │   evt_indicator.py               │
 │ EVT:  GPD, GEV             │       │                                  │
 │                            │       │ nn/                              │
@@ -350,7 +363,7 @@ Rust (PyO3, _core.so)                Python
 └────────────────────────────┘       └──────────────────────────────────┘
 ```
 
-All 13 classical estimators are implemented in Rust and exposed to Python via PyO3. The computationally intensive methods (LPPLS CMA-ES, GSADF, confidence) use rayon for parallelization. The 4 neural network methods are in Python (PyTorch/sklearn) and call `lppls_solve_linear` from Rust for the analytical linear parameter solve.
+All 15 classical estimators are implemented in Rust and exposed to Python via PyO3. The computationally intensive methods (LPPLS CMA-ES, GSADF, confidence) use rayon for parallelization. The 4 neural network methods are in Python (PyTorch/sklearn) and call `lppls_solve_linear` from Rust for the analytical linear parameter solve.
 
 | Component | Language | Why |
 |-----------|----------|-----|
@@ -382,7 +395,7 @@ Requires [Nix](https://nixos.org/) with flakes enabled.
 nix develop                  # Enter dev shell (Rust, Python 3.13, maturin, uv)
 make setup                   # Install Python deps + build Rust extension
 make build                   # Recompile Rust, install into venv
-make test                    # 35 Rust + 211 Python = 246 tests
+make test                    # 44 Rust + 249 Python = 293 tests
 make lint                    # cargo clippy + cargo fmt --check
 python analysis/accuracy_report.py   # Full analysis across all methods and timescales
 ```
@@ -439,6 +452,22 @@ pip install fatcrash[deep]   # Adds PyTorch dependency
 - Ma, J. & Li, C. (2024). "Detecting Market Bubbles: A Generalized LPPLS Neural Network Model." *Economics Letters*, 244, 112003. [DOI:10.1016/j.econlet.2024.112003](https://doi.org/10.1016/j.econlet.2024.112003) — Future work (extends P-LNN, paywalled)
 - Lee, G., Jeong, M., Park, T. & Ahn, K. (2025). "More Than Ex-Post Fitting: LPPL and Its AI-Based Classification." *Humanities and Social Sciences Communications*, 12, 236. [DOI:10.1038/s41599-025-05920-7](https://doi.org/10.1038/s41599-025-05920-7) — **Implemented** (DTCAI)
 - Sakurai, Y. & Chen, Z. (2024). "Forecasting Tail Risk via Neural Networks with Asymptotic Expansions." *IMF Working Paper* WP/24/99. [IMF](https://www.imf.org/en/Publications/WP/Issues/2024/05/10/Forecasting-Tail-Risk-via-Neural-Networks-with-Asymptotic-Expansions-548841) — Future work (CoFiE-NN, VaR-focused)
+
+### Momentum & Trend-Following
+
+- Jegadeesh, N. & Titman, S. (1993). "Returns to Buying Winners and Selling Losers: Implications for Stock Market Efficiency." *Journal of Finance*, 48(1), 65-91.
+- Scowcroft, A. & Sefton, J. (2005). "Understanding Momentum." *Financial Analysts Journal*, 61(2), 64-82.
+- Rattray, S., Harvey, C.R. & Van Hemert, O. (2018). "Strategic Rebalancing." *Journal of Portfolio Management*, 44(4), 18-31. [SSRN:2993107](https://ssrn.com/abstract=2993107)
+
+### Tail Hedging & Volatility Targeting
+
+- Dalgaard, K.T. (2016). "Tail-Risk Hedging: An Empirical Study." Copenhagen Business School (MSc thesis). — Constant volatility strategy beats put monetization.
+- Bhansali, V. (2014). "Monetization of Tail Risk." *Financial Analysts Journal*, 70(1), 65-80. [DOI:10.2469/faj.v70.n1.5](https://doi.org/10.2469/faj.v70.n1.5)
+- Cole, C.S. (2020). "Volatility and the Allegory of the Prisoner's Dilemma." Artemis Capital Management. — Long volatility as portfolio "rebounder"; stock-bond negative correlation is historically rare.
+
+### Asset Class Returns
+
+- Jordà, Ò., Knoll, K., Kuvshinov, D., Schularick, M. & Taylor, A.M. (2019). "The Rate of Return on Everything, 1870-2015." *Quarterly Journal of Economics*, 134(3), 1225-1298. [DOI:10.1093/qje/qjz012](https://doi.org/10.1093/qje/qjz012) — Housing and equities both ~7% real returns; housing at half the volatility.
 
 ### Fat Tails in Finance
 

@@ -36,26 +36,28 @@ class CrashSignal:
 DEFAULT_WEIGHTS = {
     # Bubble detectors (highest weight — best accuracy)
     "lppls_confidence": 0.16,
-    "lppls_tc_proximity": 0.06,
+    "lppls_tc_proximity": 0.05,
     "gsadf_bubble": 0.10,
     # NN bubble detectors
     "mlnn_signal": 0.05,
     "plnn_signal": 0.05,
-    "hlppl_signal": 0.06,
-    "dtcai_signal": 0.06,
+    "hlppl_signal": 0.05,
+    "dtcai_signal": 0.05,
     # Tail estimators
     "gpd_var_exceedance": 0.07,
     "kappa_regime": 0.05,
     "taleb_kappa": 0.04,
     "hill_thinning": 0.03,
-    "pickands_thinning": 0.03,
-    "deh_thinning": 0.03,
-    "qq_thinning": 0.03,
-    "maxsum_signal": 0.03,
-    # Regime
+    "pickands_thinning": 0.02,
+    "deh_thinning": 0.02,
+    "qq_thinning": 0.02,
+    "maxsum_signal": 0.02,
+    # Regime / momentum / velocity
     "hurst_trending": 0.03,
     "dfa_trending": 0.03,
-    "spectral_memory": 0.03,
+    "spectral_memory": 0.02,
+    "momentum_reversal": 0.04,
+    "velocity_spike": 0.04,
     # Other
     "multiscale": 0.06,
 }
@@ -96,8 +98,9 @@ def aggregate_signals(
                     "mlnn_signal", "plnn_signal", "hlppl_signal", "dtcai_signal"],
         "tail": ["kappa_regime", "taleb_kappa", "hill_thinning", "pickands_thinning",
                  "gpd_var_exceedance", "deh_thinning", "qq_thinning", "maxsum_signal"],
-        "regime": ["hurst_trending", "dfa_trending", "spectral_memory"],
-        "structure": ["multiscale", "lppls_tc_proximity"],
+        "regime": ["hurst_trending", "dfa_trending", "spectral_memory",
+                   "momentum_reversal"],
+        "structure": ["multiscale", "lppls_tc_proximity", "velocity_spike"],
     }
 
     n_agreeing = 0
@@ -302,3 +305,40 @@ def dtcai_signal(dtcai_score: float) -> float:
     if np.isnan(dtcai_score):
         return 0.0
     return np.clip(dtcai_score, 0.0, 1.0)
+
+
+# ── Momentum & velocity signal converters ─────────────────
+
+def momentum_reversal_signal(reversal: float) -> float:
+    """Signal from momentum reversal (long momentum exceeds short).
+
+    When long-term momentum is positive but short-term turns negative,
+    this signals a potential trend break. The wider the divergence, the
+    stronger the signal.
+
+    Reference: Jegadeesh & Titman (1993), momentum reversal after 12+ months.
+    """
+    if np.isnan(reversal):
+        return 0.0
+    # reversal = long_mom - short_mom
+    # Positive and large = trend breaking down
+    if reversal <= 0:
+        return 0.0
+    # Scale: 0.1 = mild divergence, 0.3 = full signal
+    return np.clip(reversal / 0.3, 0.0, 1.0)
+
+
+def velocity_signal(velocity: float) -> float:
+    """Signal from price velocity (volatility acceleration).
+
+    Detects cascade dynamics where vol itself is spiking — the signature
+    of forced liquidation (Volmageddon, repo crisis, etc.).
+
+    Reference: Feb 5 2018 (XIV: 116% VIX spike), Sep 2019 repo blowup.
+    """
+    if np.isnan(velocity):
+        return 0.0
+    if velocity <= 0:
+        return 0.0
+    # Scale: 0.5 = vol increased 50% (notable), 2.0 = doubled (full signal)
+    return np.clip(velocity / 2.0, 0.0, 1.0)

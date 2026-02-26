@@ -126,6 +126,45 @@ def spectral_rolling(
     bandwidth_exp: float | None = 0.65,
 ) -> npt.NDArray[np.float64]: ...
 
+# Momentum
+def momentum_score(
+    prices: npt.NDArray[np.float64],
+    lookback: int | None = 252,
+) -> float: ...
+
+def momentum_rolling(
+    prices: npt.NDArray[np.float64],
+    lookback: int | None = 252,
+    window: int | None = 504,
+) -> npt.NDArray[np.float64]: ...
+
+def momentum_reversal(
+    prices: npt.NDArray[np.float64],
+    short_lookback: int | None = 21,
+    long_lookback: int | None = 252,
+) -> float: ...
+
+def momentum_reversal_rolling(
+    prices: npt.NDArray[np.float64],
+    short_lookback: int | None = 21,
+    long_lookback: int | None = 252,
+    window: int | None = 504,
+) -> npt.NDArray[np.float64]: ...
+
+# Velocity
+def price_velocity(
+    returns: npt.NDArray[np.float64],
+    vol_window: int | None = 21,
+    lag: int | None = 5,
+) -> float: ...
+
+def price_velocity_rolling(
+    returns: npt.NDArray[np.float64],
+    vol_window: int | None = 21,
+    lag: int | None = 5,
+    window: int | None = 252,
+) -> npt.NDArray[np.float64]: ...
+
 # EVT
 def gpd_fit(
     data: npt.NDArray[np.float64],

@@ -26,6 +26,12 @@ from fatcrash._core import (
     maxsum_rolling,
     spectral_exponent,
     spectral_rolling,
+    momentum_score,
+    momentum_rolling,
+    momentum_reversal,
+    momentum_reversal_rolling,
+    price_velocity,
+    price_velocity_rolling,
 )
 
 
@@ -257,3 +263,86 @@ class TestLPPLS:
         assert 70 < tc_est < 130
         # R² should be between 0 and 1
         assert 0.0 <= r2 <= 1.0
+
+
+class TestMomentum:
+    """Tests for momentum score and reversal functions."""
+
+    def test_momentum_uptrend(self):
+        prices = np.array([100 * np.exp(0.001 * i) for i in range(300)])
+        mom = momentum_score(prices, lookback=252)
+        assert np.isfinite(mom)
+        assert mom > 0, f"Uptrend should have positive momentum, got {mom}"
+
+    def test_momentum_downtrend(self):
+        prices = np.array([100 * np.exp(-0.001 * i) for i in range(300)])
+        mom = momentum_score(prices, lookback=252)
+        assert np.isfinite(mom)
+        assert mom < 0, f"Downtrend should have negative momentum, got {mom}"
+
+    def test_momentum_short_data(self):
+        prices = np.array([100.0, 101.0, 102.0])
+        mom = momentum_score(prices, lookback=10)
+        assert np.isnan(mom)
+
+    def test_momentum_rolling(self):
+        prices = np.array([100 * np.exp(0.001 * i) for i in range(600)])
+        result = momentum_rolling(prices, lookback=252, window=300)
+        assert len(result) == len(prices)
+        # First 299 values should be NaN, rest should be finite
+        assert np.isnan(result[0])
+        assert np.isfinite(result[-1])
+        assert result[-1] > 0
+
+    def test_reversal_signal(self):
+        # Uptrend then reversal
+        prices = np.array(
+            [100 * np.exp(0.002 * i) for i in range(250)]
+            + [100 * np.exp(0.002 * 250) * np.exp(-0.01 * i) for i in range(1, 51)]
+        )
+        rev = momentum_reversal(prices, short_lookback=21, long_lookback=200)
+        assert np.isfinite(rev)
+        assert rev > 0, f"Reversal should be positive during unwind, got {rev}"
+
+    def test_reversal_rolling(self):
+        prices = np.array([100 * np.exp(0.001 * i) for i in range(600)])
+        result = momentum_reversal_rolling(
+            prices, short_lookback=21, long_lookback=252, window=300)
+        assert len(result) == len(prices)
+        assert np.isnan(result[0])
+        assert np.isfinite(result[-1])
+
+
+class TestVelocity:
+    """Tests for price velocity (cascade detection)."""
+
+    def test_stable_vol(self):
+        rng = np.random.default_rng(42)
+        returns = 0.01 * rng.standard_normal(500)
+        vel = price_velocity(returns, vol_window=21, lag=5)
+        assert np.isfinite(vel)
+        # Stable vol: velocity should be moderate
+        assert abs(vel) < 3.0, f"Stable vol should have moderate velocity, got {vel}"
+
+    def test_vol_spike(self):
+        # Low vol then high vol
+        returns = np.concatenate([
+            np.full(100, 0.001),
+            0.05 * np.random.default_rng(42).standard_normal(21),
+        ])
+        vel = price_velocity(returns, vol_window=21, lag=5)
+        assert np.isfinite(vel)
+        assert vel > 0, f"Velocity should be positive during vol spike, got {vel}"
+
+    def test_insufficient_data(self):
+        returns = np.array([0.01] * 10)
+        vel = price_velocity(returns, vol_window=21, lag=5)
+        assert np.isnan(vel)
+
+    def test_velocity_rolling(self):
+        rng = np.random.default_rng(42)
+        returns = 0.01 * rng.standard_normal(500)
+        result = price_velocity_rolling(returns, vol_window=21, lag=5, window=252)
+        assert len(result) == len(returns)
+        assert np.isnan(result[0])
+        assert np.isfinite(result[-1])

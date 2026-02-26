@@ -20,8 +20,14 @@ from fatcrash._core import (
     kappa_rolling,
     maxsum_ratio,
     maxsum_rolling,
+    momentum_reversal,
+    momentum_reversal_rolling,
+    momentum_rolling,
+    momentum_score,
     pickands_estimator,
     pickands_rolling,
+    price_velocity,
+    price_velocity_rolling,
     qq_estimator,
     qq_rolling,
     spectral_exponent,
@@ -350,3 +356,117 @@ def estimate_spectral(
     else:
         regime = "short_memory"
     return SpectralEstimate(d=d, regime=regime)
+
+
+# ── Momentum ───────────────────────────────────────────────
+# Reference: Jegadeesh & Titman (1993), Scowcroft & Sefton (2005)
+
+
+@dataclass
+class MomentumEstimate:
+    """Trailing log return over a lookback period."""
+    momentum: float  # log return
+    lookback: int
+    direction: str  # "up", "down", or "flat"
+
+
+def estimate_momentum(
+    prices: npt.NDArray[np.float64],
+    lookback: int = 252,
+) -> MomentumEstimate:
+    """Compute trailing momentum (log return) over lookback period.
+
+    Reference: Jegadeesh, N. & Titman, S. (1993). "Returns to Buying
+    Winners and Selling Losers." Journal of Finance, 48(1), 65-91.
+    """
+    mom = momentum_score(prices, lookback=lookback)
+    if np.isnan(mom):
+        direction = "unknown"
+    elif mom > 0.02:
+        direction = "up"
+    elif mom < -0.02:
+        direction = "down"
+    else:
+        direction = "flat"
+    return MomentumEstimate(momentum=mom, lookback=lookback, direction=direction)
+
+
+def rolling_momentum(
+    prices: npt.NDArray[np.float64],
+    lookback: int = 252,
+    window: int = 504,
+) -> npt.NDArray[np.float64]:
+    """Rolling momentum score."""
+    return np.asarray(momentum_rolling(prices, lookback=lookback, window=window))
+
+
+@dataclass
+class ReversalEstimate:
+    """Momentum reversal: divergence between short and long-term momentum."""
+    reversal: float  # long_mom - short_mom
+    is_reversing: bool  # reversal > threshold
+
+
+def estimate_reversal(
+    prices: npt.NDArray[np.float64],
+    short_lookback: int = 21,
+    long_lookback: int = 252,
+) -> ReversalEstimate:
+    """Detect momentum reversal (long positive, short turning negative)."""
+    rev = momentum_reversal(prices, short_lookback=short_lookback,
+                            long_lookback=long_lookback)
+    return ReversalEstimate(
+        reversal=rev,
+        is_reversing=rev > 0.1 if not np.isnan(rev) else False,
+    )
+
+
+def rolling_reversal(
+    prices: npt.NDArray[np.float64],
+    short_lookback: int = 21,
+    long_lookback: int = 252,
+    window: int = 504,
+) -> npt.NDArray[np.float64]:
+    """Rolling momentum reversal signal."""
+    return np.asarray(momentum_reversal_rolling(
+        prices, short_lookback=short_lookback,
+        long_lookback=long_lookback, window=window))
+
+
+# ── Price Velocity ─────────────────────────────────────────
+# Reference: Feb 5 2018 Volmageddon, Sep 2019 repo crisis
+
+
+@dataclass
+class VelocityEstimate:
+    """Rate of change of realized volatility (cascade detector)."""
+    velocity: float  # fractional change in vol
+    is_accelerating: bool  # velocity > 1.0 (vol doubled)
+
+
+def estimate_velocity(
+    returns: npt.NDArray[np.float64],
+    vol_window: int = 21,
+    lag: int = 5,
+) -> VelocityEstimate:
+    """Compute price velocity (rate of change of realized volatility).
+
+    Detects cascade dynamics like Volmageddon (Feb 5, 2018) where forced
+    liquidation causes volatility to accelerate.
+    """
+    vel = price_velocity(returns, vol_window=vol_window, lag=lag)
+    return VelocityEstimate(
+        velocity=vel,
+        is_accelerating=vel > 1.0 if not np.isnan(vel) else False,
+    )
+
+
+def rolling_velocity(
+    returns: npt.NDArray[np.float64],
+    vol_window: int = 21,
+    lag: int = 5,
+    window: int = 252,
+) -> npt.NDArray[np.float64]:
+    """Rolling price velocity."""
+    return np.asarray(price_velocity_rolling(
+        returns, vol_window=vol_window, lag=lag, window=window))

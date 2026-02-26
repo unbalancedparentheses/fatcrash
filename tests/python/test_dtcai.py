@@ -187,7 +187,7 @@ class TestDTCAISignalConverter:
         from fatcrash.aggregator.signals import DEFAULT_WEIGHTS
 
         assert "dtcai_signal" in DEFAULT_WEIGHTS
-        assert DEFAULT_WEIGHTS["dtcai_signal"] == pytest.approx(0.06)
+        assert DEFAULT_WEIGHTS["dtcai_signal"] == pytest.approx(0.05)
 
     def test_weights_sum_to_one(self):
         from fatcrash.aggregator.signals import DEFAULT_WEIGHTS

@@ -30,6 +30,18 @@ fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(tail::maxsum::maxsum_rolling, m)?)?;
     m.add_function(wrap_pyfunction!(tail::spectral::spectral_exponent, m)?)?;
     m.add_function(wrap_pyfunction!(tail::spectral::spectral_rolling, m)?)?;
+    m.add_function(wrap_pyfunction!(tail::momentum::momentum_score, m)?)?;
+    m.add_function(wrap_pyfunction!(tail::momentum::momentum_rolling, m)?)?;
+    m.add_function(wrap_pyfunction!(tail::momentum::momentum_reversal, m)?)?;
+    m.add_function(wrap_pyfunction!(
+        tail::momentum::momentum_reversal_rolling,
+        m
+    )?)?;
+    m.add_function(wrap_pyfunction!(tail::velocity::price_velocity, m)?)?;
+    m.add_function(wrap_pyfunction!(
+        tail::velocity::price_velocity_rolling,
+        m
+    )?)?;
 
     // EVT
     m.add_function(wrap_pyfunction!(evt::gpd::gpd_fit, m)?)?;

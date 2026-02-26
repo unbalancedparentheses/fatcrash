@@ -4,6 +4,8 @@ pub mod hill;
 pub mod hurst;
 pub mod kappa;
 pub mod maxsum;
+pub mod momentum;
 pub mod pickands;
 pub mod qq;
 pub mod spectral;
+pub mod velocity;

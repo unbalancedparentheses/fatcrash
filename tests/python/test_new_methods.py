@@ -19,8 +19,22 @@ from fatcrash.indicators.tail_indicator import (
     rolling_pickands,
     estimate_hurst,
     rolling_hurst,
+    estimate_momentum,
+    rolling_momentum,
+    estimate_reversal,
+    estimate_velocity,
+    rolling_velocity,
+)
+from fatcrash.indicators.vol_indicator import (
+    constant_vol_weight,
+    rolling_constant_vol_weight,
+    rebalance_risk,
 )
 from fatcrash.indicators.bubble_indicator import detect_bubble, rolling_bubble_detection
+from fatcrash.aggregator.signals import (
+    momentum_reversal_signal,
+    velocity_signal,
+)
 
 
 # ══════════════════════════════════════════
@@ -210,3 +224,166 @@ class TestCrossMethodConsistency:
         # Both should indicate trending/explosive
         assert h > 0.4, f"Trending returns should have H > 0.5: {h}"
         assert stat > 0, f"Explosive series should have positive GSADF: {stat}"
+
+
+# ══════════════════════════════════════════
+# Momentum (Jegadeesh-Titman 1993)
+# ══════════════════════════════════════════
+
+class TestMomentumWrapper:
+    def test_uptrend_positive(self):
+        prices = np.array([100 * np.exp(0.001 * i) for i in range(300)])
+        est = estimate_momentum(prices, lookback=252)
+        assert est.direction == "up"
+        assert est.momentum > 0
+
+    def test_downtrend_negative(self):
+        prices = np.array([100 * np.exp(-0.001 * i) for i in range(300)])
+        est = estimate_momentum(prices, lookback=252)
+        assert est.direction == "down"
+        assert est.momentum < 0
+
+    def test_rolling_shape(self):
+        prices = np.array([100 * np.exp(0.001 * i) for i in range(600)])
+        result = rolling_momentum(prices, lookback=252, window=300)
+        assert len(result) == 600
+
+    def test_reversal_detects_unwind(self):
+        # Build up strongly then crash hard — reversal signal should be positive
+        prices = np.array(
+            [100 * np.exp(0.003 * i) for i in range(260)]
+            + [100 * np.exp(0.003 * 260) * np.exp(-0.02 * i)
+               for i in range(1, 41)]
+        )
+        est = estimate_reversal(prices, short_lookback=21, long_lookback=200)
+        # reversal = long_mom - short_mom should be positive (long still up, short down)
+        assert est.reversal > 0, f"Reversal should be positive, got {est.reversal}"
+
+    @pytest.mark.parametrize("asset_name", ["btc", "spy", "gold"])
+    def test_on_real_data(self, asset_name):
+        df = from_sample(asset_name)
+        prices = df["close"].values.astype(np.float64)
+        est = estimate_momentum(prices, lookback=252)
+        assert np.isfinite(est.momentum), f"{asset_name}: momentum is NaN"
+
+
+# ══════════════════════════════════════════
+# Velocity (cascade detection)
+# ══════════════════════════════════════════
+
+class TestVelocityWrapper:
+    def test_stable_moderate(self):
+        rng = np.random.default_rng(42)
+        returns = 0.01 * rng.standard_normal(500)
+        est = estimate_velocity(returns)
+        assert np.isfinite(est.velocity)
+        assert not est.is_accelerating  # stable vol shouldn't trigger
+
+    def test_spike_positive(self):
+        returns = np.concatenate([
+            np.full(100, 0.001),
+            0.05 * np.random.default_rng(42).standard_normal(21),
+        ])
+        est = estimate_velocity(returns, vol_window=21, lag=5)
+        assert np.isfinite(est.velocity)
+        assert est.velocity > 0
+
+    def test_rolling_shape(self):
+        rng = np.random.default_rng(42)
+        returns = 0.01 * rng.standard_normal(500)
+        result = rolling_velocity(returns, vol_window=21, lag=5, window=252)
+        assert len(result) == 500
+
+    @pytest.mark.parametrize("asset_name", ["btc", "spy", "gold"])
+    def test_on_real_data(self, asset_name):
+        df = from_sample(asset_name)
+        returns = log_returns(df)
+        est = estimate_velocity(returns)
+        assert np.isfinite(est.velocity), f"{asset_name}: velocity is NaN"
+
+
+# ══════════════════════════════════════════
+# Constant volatility weighting (CBS thesis)
+# ══════════════════════════════════════════
+
+class TestConstantVol:
+    def test_high_vol_reduces_weight(self):
+        # High vol returns → weight < 1
+        rng = np.random.default_rng(42)
+        returns = 0.03 * rng.standard_normal(100)  # ~48% annualized vol
+        result = constant_vol_weight(returns, target_vol=0.15, window=63)
+        assert result.weight < 1.0, f"High vol should reduce weight, got {result.weight}"
+        assert result.current_vol > 0.15
+
+    def test_low_vol_increases_weight(self):
+        # Low vol returns → weight > 1
+        rng = np.random.default_rng(42)
+        returns = 0.002 * rng.standard_normal(100)  # ~3% annualized vol
+        result = constant_vol_weight(returns, target_vol=0.15, window=63)
+        assert result.weight > 1.0, f"Low vol should increase weight, got {result.weight}"
+
+    def test_max_leverage_cap(self):
+        returns = np.full(100, 0.0001)  # near-zero vol
+        result = constant_vol_weight(returns, target_vol=0.15, max_leverage=2.0, window=63)
+        assert result.weight <= 2.0
+
+    def test_rolling_shape(self):
+        rng = np.random.default_rng(42)
+        returns = 0.01 * rng.standard_normal(200)
+        result = rolling_constant_vol_weight(returns, window=63)
+        assert len(result) == 200
+        assert np.isnan(result[0])
+        assert np.isfinite(result[-1])
+
+
+# ══════════════════════════════════════════
+# Rebalance risk (Rattray-Harvey 2018)
+# ══════════════════════════════════════════
+
+class TestRebalanceRisk:
+    def test_trending_drawdown_high_risk(self):
+        # Persistent (DFA > 0.5) + negative momentum = dangerous to rebalance
+        result = rebalance_risk(dfa_alpha=0.7, momentum=-0.15)
+        assert result.risk > 0.3, f"Should be high risk, got {result.risk}"
+
+    def test_mean_reverting_low_risk(self):
+        # Mean-reverting + drawdown = safe to rebalance
+        result = rebalance_risk(dfa_alpha=0.4, momentum=-0.15)
+        assert result.risk == 0.0, f"Mean-reverting should be zero risk, got {result.risk}"
+
+    def test_trending_uptrend_low_risk(self):
+        # Persistent + positive momentum = not dangerous
+        result = rebalance_risk(dfa_alpha=0.7, momentum=0.1)
+        assert result.risk == 0.0, f"Uptrend should be zero risk, got {result.risk}"
+
+    def test_nan_inputs(self):
+        result = rebalance_risk(dfa_alpha=float("nan"), momentum=-0.1)
+        assert result.risk == 0.0
+
+
+# ══════════════════════════════════════════
+# Signal converters
+# ══════════════════════════════════════════
+
+class TestNewSignalConverters:
+    def test_momentum_reversal_signal_positive(self):
+        assert momentum_reversal_signal(0.3) == pytest.approx(1.0)
+
+    def test_momentum_reversal_signal_zero(self):
+        assert momentum_reversal_signal(-0.1) == 0.0
+
+    def test_momentum_reversal_signal_nan(self):
+        assert momentum_reversal_signal(float("nan")) == 0.0
+
+    def test_velocity_signal_spike(self):
+        assert velocity_signal(2.0) == pytest.approx(1.0)
+
+    def test_velocity_signal_moderate(self):
+        sig = velocity_signal(1.0)
+        assert 0.0 < sig < 1.0
+
+    def test_velocity_signal_negative(self):
+        assert velocity_signal(-0.5) == 0.0
+
+    def test_velocity_signal_nan(self):
+        assert velocity_signal(float("nan")) == 0.0

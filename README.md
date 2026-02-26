@@ -315,6 +315,14 @@ gsadf_test(quarterly_revenue)  # Is revenue growth explosive/unsustainable?
 
 The challenge: quarterly data gives ~80 observations over 20 years (vs ~5,000 daily prices). Tail estimators need at least ~100 data points to be reliable. Use monthly revenue or longer history when possible.
 
+**What to watch for:**
+- **Hill alpha dropping below 3**: Revenue shocks are getting more extreme. The distribution is shifting toward heavier tails.
+- **DFA shifting from > 0.5 to < 0.5**: Growth momentum is breaking down. Revenue used to be self-reinforcing; now it's mean-reverting.
+- **Max-to-Sum ratio rising**: A single quarter is starting to dominate the entire history — either a massive win or a massive loss.
+- **GPD VaR spiking**: The worst-case quarterly decline is getting worse, even accounting for the fat tails.
+
+These methods won't tell you *why* revenue is deteriorating — you still need business context for that. But they can tell you *that* something structural has changed in the data before it becomes obvious in the headline numbers.
+
 ## Architecture
 
 ```

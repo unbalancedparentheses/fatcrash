@@ -88,6 +88,14 @@ All accuracy numbers are in-sample on historical data. Methods are tested on bot
 
 **Why precision is low for tail/regime methods:** These methods detect distributional regime shifts (tail thickening, persistent dynamics), not crash-specific patterns. They fire in many non-crash periods because fat tails and persistence are pervasive in financial data. This is by design — they measure the *distributional regime*, not a specific crash. LPPLS and GSADF have higher precision because they detect bubble-specific structure.
 
+**The Sornette–Bouchaud debate on precision vs recall:**
+
+Sornette (the LPPLS inventor) argues that LPPLS is deliberately tuned for **high recall at the cost of precision** because the cost function is asymmetric — missing a crash is far more expensive than a false alarm. He calls false positives "failed predictions" and argues they are inevitable: bubbles can end in slow deflation rather than sharp crashes. His 2024 paper with Nielsen ([arXiv:2405.12803](https://arxiv.org/abs/2405.12803)) introduced the tightened omega [6,13] range specifically to improve precision without sacrificing recall.
+
+Bouchaud takes a more skeptical view. In his work at CFM and in papers with Potters, he emphasizes that fat-tail estimators (Hill, etc.) measure **unconditional** properties of returns and are poor at **conditional** crash prediction. His point is exactly what the data shows: tail estimators have decent recall but terrible precision because fat tails are always present, not just before crashes. He favors portfolio-level risk measures (drawdown control, volatility targeting) over point-in-time crash prediction.
+
+Both perspectives are reflected in fatcrash: LPPLS targets the mechanism (Sornette's approach), tail estimators measure the regime (which Bouchaud correctly notes is always fat-tailed), and the aggregator combines both — using Sornette-style bubble detection as the primary signal and Bouchaud-style regime measurement as confirmation.
+
 ### Recall by crash size
 
 | Method | Small (<15%) | Medium (15-30%) | Major (>30%) |
@@ -271,6 +279,41 @@ Methods grouped into 4 independent categories. When 3+ categories agree, probabi
 | **Structure** | Multiscale, LPPLS tc proximity | Cross-timeframe agreement, timing |
 
 Indicators are also computed at daily, 3-day, and weekly frequencies. A signal at one scale may be noise; a signal across all three is structural.
+
+## Beyond Valuations: Revenue & Profit
+
+These methods were built for market prices, but most transfer to fundamental data like revenue or profit growth. The key distinction: **market prices** reflect collective speculative behavior (reflexivity, herding, positive feedback loops), while **revenue/profit** reflects real economic activity (customer demand, operational execution, competitive dynamics).
+
+### What transfers
+
+| Method | Works on revenue/profit? | Why |
+|--------|:-:|-----|
+| Hill, DEH, QQ, Pickands | Yes | Tail thickness is a property of any distribution. Revenue growth rates have fat tails — Gabaix (2011) showed that idiosyncratic firm-level shocks drive aggregate fluctuations precisely because firm-size distributions are fat-tailed. |
+| Kappa, Taleb kappa | Yes | Measures departure from Gaussian max-stability. Works on any data where you suspect non-Gaussian extremes. |
+| Max-to-Sum ratio | Yes | A single quarter where revenue drops 50% dominating the total sum = same math as a single market crash day. |
+| GPD / GEV | Yes | EVT is distribution-agnostic. Fit GPD to the worst quarterly revenue declines for valid tail risk estimates. |
+| Hurst, DFA, Spectral | Yes | Revenue series often show strong persistence (H > 0.5) due to contracts and customer stickiness. A shift from persistent to anti-persistent could signal fundamental deterioration. |
+| GSADF | Partially | Detects unsustainable exponential growth. Could flag "revenue bubbles" — growth rates that imply a company would need to capture 100% of its addressable market. |
+| LPPLS, LPPLS confidence | No | Models speculative bubble dynamics (herding, log-periodic oscillations). Revenue doesn't exhibit these patterns — it's driven by real economic activity, not reflexive speculation. |
+
+### Practical application
+
+For a company's quarterly revenue time series:
+
+```python
+import numpy as np
+from fatcrash._core import hill_estimator, dfa_exponent, hurst_exponent, gsadf_test
+
+# Quarterly revenue growth rates
+growth = np.diff(np.log(quarterly_revenue))
+
+hill_estimator(growth)    # Tail index — are revenue shocks fat-tailed?
+dfa_exponent(growth)      # Persistence — is growth momentum persistent or mean-reverting?
+hurst_exponent(growth)    # Same question, different method
+gsadf_test(quarterly_revenue)  # Is revenue growth explosive/unsustainable?
+```
+
+The challenge: quarterly data gives ~80 observations over 20 years (vs ~5,000 daily prices). Tail estimators need at least ~100 data points to be reliable. Use monthly revenue or longer history when possible.
 
 ## Architecture
 

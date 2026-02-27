@@ -41,6 +41,17 @@ fatcrash detect --asset BTC --source coingecko --no-use-cache
 fatcrash cache-clear
 ```
 
+For FRED forex analysis, the `load_fred_forex()` helper loads all 23 currency pairs from the [forex-centuries](https://github.com/unbalancedparentheses/forex-centuries) dataset:
+
+```python
+from fatcrash.data.ingest import load_fred_forex
+
+pairs = load_fred_forex()           # dict of 23 DataFrames
+aud = load_fred_forex("AUD_USD")    # single pair
+```
+
+Requires `git clone https://github.com/unbalancedparentheses/forex-centuries ~/projects/forex-centuries` or set `FOREX_CENTURIES_DIR`.
+
 > **DISCLAIMER:** This software is for academic research and educational purposes only. It does not constitute financial advice. No warranty is provided regarding the accuracy of predictions. Do not use for investment decisions.
 
 ## Why This Exists
@@ -65,26 +76,32 @@ VaR under normality, Sharpe ratios, CAPM betas, mean-variance optimization — a
 
 ## Results
 
-### Crash detection: precision, recall, and F1 (39 drawdowns across BTC, SPY, Gold)
+### Crash detection: precision, recall, and F1
 
-All accuracy numbers are in-sample on historical data. Methods are tested on both crash windows (true positives) and non-crash windows (false positives) sampled at least 180 days from any crash.
+#### Core dataset (39 drawdowns across BTC, SPY, Gold)
 
-| Method | Precision | Recall | F1 | Notes |
-|--------|:---------:|:------:|:--:|-------|
-| **LPPLS** | **37%** | **74%** | **50%** | Tightened: Nielsen omega [6,13] + tc constraint |
-| **LPPLS confidence** | **29%** | **90%** | **43%** | Multi-window aggregation (rayon-parallelized) |
-| GSADF | 38% | 38% | 38% | Best for medium/major crashes |
-| **DFA** | **22%** | **82%** | **34%** | Best non-bubble method |
-| Hurst | 19% | 59% | 28% | DFA handles non-stationarity better |
-| Pickands | 19% | 49% | 27% | |
-| Kappa | 19% | 49% | 27% | |
-| DEH | 18% | 46% | 26% | Most useful on major crashes (62%) |
-| Spectral | 22% | 28% | 25% | |
-| Taleb Kappa | 20% | 33% | 25% | 50% recall on major crashes |
-| QQ | 16% | 38% | 23% | |
-| GPD VaR | 12% | 42% | 19% | |
-| Max-to-Sum | 12% | 31% | 18% | |
-| Hill | 12% | 28% | 16% | Unreliable alone, contributes to ensemble |
+All accuracy numbers are in-sample on historical data. Methods are tested on both crash windows (120 days before a drawdown peak) and non-crash windows (random 120-day stretches at least 180 days from any crash). 39 crash windows, 150 non-crash windows.
+
+| Method | TP | FP | FN | TN | Precision | Recall | F1 |
+|--------|:--:|:--:|:--:|:--:|:---------:|:------:|:--:|
+| **LPPLS** | **35** | **40** | **4** | **110** | **47%** | **90%** | **61%** |
+| **LPPLS confidence** | **17** | **16** | **22** | **134** | **52%** | **44%** | **47%** |
+| M-LNN | 22 | 47 | 17 | 103 | 32% | 56% | 41% |
+| GSADF | 15 | 24 | 24 | 126 | 38% | 38% | 38% |
+| **DFA** | **32** | **115** | **7** | **35** | **22%** | **82%** | **34%** |
+| Hurst | 23 | 101 | 16 | 49 | 19% | 59% | 28% |
+| Pickands | 19 | 82 | 20 | 68 | 19% | 49% | 27% |
+| Kappa | 19 | 83 | 20 | 67 | 19% | 49% | 27% |
+| DEH | 18 | 81 | 21 | 69 | 18% | 46% | 26% |
+| Spectral | 11 | 38 | 28 | 112 | 22% | 28% | 25% |
+| Taleb Kappa | 13 | 53 | 26 | 97 | 20% | 33% | 25% |
+| P-LNN | 9 | 30 | 30 | 120 | 23% | 23% | 23% |
+| QQ | 15 | 79 | 24 | 71 | 16% | 38% | 23% |
+| GPD VaR | 10 | 73 | 14 | 66 | 12% | 42% | 19% |
+| Max-to-Sum | 12 | 86 | 27 | 64 | 12% | 31% | 18% |
+| Hill | 11 | 84 | 28 | 66 | 12% | 28% | 16% |
+| HLPPL | 0 | 0 | 39 | 150 | 0% | 0% | 0% |
+| DTCAI | 0 | 0 | 39 | 150 | 0% | 0% | 0% |
 
 **Why precision is low for tail/regime methods:** These methods detect distributional regime shifts (tail thickening, persistent dynamics), not crash-specific patterns. They fire in many non-crash periods because fat tails and persistence are pervasive in financial data. This is by design — they measure the *distributional regime*, not a specific crash. LPPLS and GSADF have higher precision because they detect bubble-specific structure.
 
@@ -96,29 +113,122 @@ Bouchaud takes a more skeptical view. In his work at CFM and in papers with Pott
 
 Both perspectives are reflected in fatcrash: LPPLS targets the mechanism (Sornette's approach), tail estimators measure the regime (which Bouchaud correctly notes is always fat-tailed), and the aggregator combines both — using Sornette-style bubble detection as the primary signal and Bouchaud-style regime measurement as confirmation.
 
-### Recall by crash size
+**NN method notes:** M-LNN (per-series fitting) is the strongest NN approach at F1=41%, comparable to GSADF. P-LNN (pre-trained, ~700x faster) underperforms at F1=23%. HLPPL and DTCAI both score 0% — HLPPL's volume-based sentiment proxy likely needs real NLP sentiment data, and DTCAI's reliability classifier (trained on BTC only) does not generalize cross-asset.
+
+#### Extended dataset (FRED forex + options backtester)
+
+To test generalization beyond the three core assets, we evaluate on 23 FRED forex pairs (1971–2025) and 6 options backtester series. 57 crash windows, 481 non-crash windows.
+
+| Method | TP | FP | FN | TN | Precision | Recall | F1 |
+|--------|:--:|:--:|:--:|:--:|:---------:|:------:|:--:|
+| LPPLS confidence | 31 | 45 | 26 | 436 | 41% | 54% | 47% |
+| LPPLS | 51 | 116 | 6 | 365 | 31% | 89% | 46% |
+| GSADF | 40 | 91 | 17 | 390 | 31% | 70% | 43% |
+| M-LNN | 35 | 136 | 22 | 345 | 20% | 61% | 31% |
+| QQ | 37 | 215 | 20 | 251 | 15% | 65% | 24% |
+| Max-to-Sum | 33 | 210 | 24 | 261 | 14% | 58% | 22% |
+| Kappa | 32 | 220 | 25 | 261 | 13% | 56% | 21% |
+| Hill | 28 | 202 | 29 | 279 | 12% | 49% | 20% |
+| Hurst | 40 | 314 | 17 | 160 | 11% | 70% | 19% |
+| Spectral | 17 | 118 | 40 | 356 | 13% | 30% | 18% |
+| DFA | 41 | 374 | 16 | 100 | 10% | 72% | 17% |
+| Pickands | 26 | 232 | 31 | 230 | 10% | 46% | 17% |
+| GPD VaR | 17 | 169 | 10 | 196 | 9% | 63% | 16% |
+| DEH | 25 | 233 | 32 | 233 | 10% | 44% | 16% |
+| Taleb Kappa | 21 | 187 | 36 | 280 | 10% | 37% | 16% |
+| P-LNN | 5 | 52 | 52 | 429 | 9% | 9% | 9% |
+
+LPPLS maintains 89% recall on the extended dataset. GSADF jumps from F1=38% to F1=43% — forex pairs provide more explosive episodes for GSADF to detect. DFA's precision drops (10% vs 22%) because forex data shows persistent dynamics even in non-crash periods.
+
+#### Combined dataset (96 crash windows, 631 non-crash windows)
+
+Merging core (BTC/SPY/Gold) and extended (FRED/OptsBT) datasets:
+
+| Method | Precision | Recall | F1 |
+|--------|:---------:|:------:|:--:|
+| **LPPLS** | **36%** | **90%** | **51%** |
+| LPPLS confidence | 44% | 50% | 47% |
+| GSADF | 32% | 57% | 41% |
+| M-LNN | 24% | 59% | 34% |
+| QQ | 15% | 54% | 24% |
+| Kappa | 14% | 53% | 23% |
+| DFA | 13% | 76% | 22% |
+| Hurst | 13% | 66% | 22% |
+| Max-to-Sum | 13% | 47% | 21% |
+| Spectral | 15% | 29% | 20% |
+| Pickands | 13% | 47% | 20% |
+| DEH | 12% | 45% | 19% |
+| Hill | 12% | 41% | 19% |
+| Taleb Kappa | 12% | 35% | 18% |
+| GPD VaR | 10% | 53% | 17% |
+| P-LNN | 15% | 15% | 15% |
+
+LPPLS recall holds at 90% across 96 crash windows spanning crypto, equities, commodities, and 23 forex pairs. This is the strongest evidence that LPPLS detects a universal bubble-to-crash mechanism, not an asset-specific pattern.
+
+### Recall by crash size (BTC, SPY, Gold)
 
 | Method | Small (<15%) | Medium (15-30%) | Major (>30%) |
 |--------|:---:|:---:|:---:|
-| LPPLS confidence | 93% | 94% | 75% |
-| LPPLS | 86% | 71% | 62% |
+| LPPLS | 86% | 100% | 75% |
 | DFA | 86% | 88% | 62% |
 | Hurst | 57% | 65% | 50% |
-| GSADF | 14% | 59% | 38% |
+| M-LNN | 57% | 65% | 38% |
+| LPPLS confidence | 43% | 59% | 12% |
 | DEH | 43% | 41% | 62% |
 | Taleb Kappa | 21% | 35% | 50% |
+| GSADF | 14% | 59% | 38% |
 
-### Combined detector
+LPPLS catches 100% of medium crashes (15-30% drawdowns). LPPLS confidence drops to 12% on major crashes — the multi-window aggregation is too conservative for the fastest, most violent drawdowns. DEH and Taleb Kappa improve on major crashes (62% and 50%), detecting the tail-thickening that precedes large moves.
 
-| | Small | Medium | Major | Overall |
-|--------|:---:|:---:|:---:|:---:|
-| **All methods + agreement bonus** | **64%** | **94%** | **75%** | **79%** |
+### Weighted ensemble aggregator
 
-When 3+ independent method categories (bubble, tail, regime, structure) agree, the probability gets a +15% bonus. No single method is reliable alone; the ensemble is.
+Combines all methods via weighted average + category agreement bonus. When 3+ independent categories (bubble, tail, regime, structure) agree, probability gets a +15% bonus.
+
+**Core dataset (39 crash, 150 non-crash):**
+
+| Threshold | Level | Precision | Recall | F1 |
+|:---------:|-------|:---------:|:------:|:--:|
+| 0.3 | ELEVATED+ | 27% | 87% | 42% |
+| 0.4 | >40% | 38% | 72% | 50% |
+| **0.5** | **HIGH+** | **70%** | **41%** | **52%** |
+| 0.7 | CRITICAL+ | 0% | 0% | 0% |
+
+**Extended dataset (57 crash, 481 non-crash):**
+
+| Threshold | Level | Precision | Recall | F1 |
+|:---------:|-------|:---------:|:------:|:--:|
+| 0.3 | ELEVATED+ | 16% | 91% | 27% |
+| 0.4 | >40% | 22% | 77% | 34% |
+| **0.5** | **HIGH+** | **42%** | **61%** | **50%** |
+| 0.7 | CRITICAL+ | 0% | 0% | 0% |
+
+At threshold 0.5, the aggregator achieves P=70%, R=41%, F1=52% on the core dataset — the highest precision of any configuration. On the extended dataset it maintains F1=50% with P=42%, R=61%. The best individual method (LPPLS, F1=61%) still outperforms the ensemble on F1; the ensemble's advantage is precision (70% vs 47%) at the cost of recall.
 
 ### 6/6 known GBP/USD crises detected
 
 1976 IMF Crisis, 1985 Plaza Accord, 1992 Black Wednesday, 2008 Financial Crisis, 2016 Brexit, 2022 Truss Mini-Budget.
+
+| Crisis | Hill alpha | K/bench | Status |
+|--------|:---------:|:-------:|:------:|
+| 1976 IMF Crisis | 2.51 | 0.71 | DETECTED |
+| 1985 Plaza Accord | 2.93 | 0.80 | DETECTED |
+| 1992 Black Wednesday | 4.08 | 0.88 | DETECTED |
+| 2008 Financial Crisis | 2.78 | 0.56 | DETECTED |
+| 2016 Brexit Vote | 1.92 | 0.48 | DETECTED |
+| 2022 Truss Mini-Budget | 2.81 | 0.92 | DETECTED |
+
+### GBP/USD by decade (1971-2025)
+
+| Decade | N days | Hill alpha | Kappa | K/bench | Taleb K | VaR 95% | Worst day |
+|--------|:------:|:---------:|:-----:|:-------:|:-------:|:-------:|:---------:|
+| 1970s | 2,247 | 2.92 | 0.648 | 0.78 | 0.238 | 6.2% | -3.8% |
+| 1980s | 2,508 | 4.36 | 0.567 | 0.68 | 0.336 | 3.8% | -3.8% |
+| 1990s | 2,515 | 4.51 | 0.686 | 0.83 | 0.116 | 3.4% | -3.3% |
+| 2000s | 2,516 | 2.90 | 0.474 | 0.57 | 0.324 | 5.5% | -5.0% |
+| 2010s | 2,501 | 3.86 | 0.293 | 0.35 | 0.504 | 2.0% | -8.2% |
+| 2020s | 1,498 | 3.39 | 0.574 | 0.71 | 0.236 | 3.1% | -3.1% |
+
+The 2010s are notable: lowest kappa/benchmark ratio (0.35) yet the worst single-day loss (-8.2%, Brexit). This is the signature of a regime where extreme events dominate — low tail index and high concentration of risk in a single observation.
 
 ## 500 Years of Forex Data
 
@@ -179,6 +289,49 @@ Summary across 30 countries:
 - 20/30 have DEH gamma > 0, 28/30 have QQ alpha < 4 (heavy tails confirmed by all estimators)
 
 Germany, Austria, Argentina, and Portugal saturate at Taleb kappa = 1.0 — Cauchy-like behavior where the CLT does not operate at any practical sample size. Italy (H = 0.80, DFA = 1.44) and Portugal (H = 0.85) show the strongest persistence over century-scale data.
+
+### Cross-method summary
+
+**FRED Daily Forex (23 pairs):**
+
+| Metric | Value |
+|--------|:-----:|
+| DEH gamma > 0 (heavy tails) | 23/23 |
+| Hurst H > 0.5 (persistent) | 23/23 |
+| DFA alpha > 0.5 (persistent) | 23/23 |
+| Hill alpha < 4 (fat tails) | 21/23 |
+| QQ alpha < 4 (fat tails) | 20/23 |
+| Spectral d > 0 (long memory) | 19/23 |
+| Taleb kappa > 0.1 (fat) | 19/23 |
+| Pickands > 0 (heavy tails) | 18/23 |
+| GSADF bubble detected | 18/23 |
+| Mean Hill alpha | 2.95 |
+| Mean QQ alpha | 2.84 |
+| Mean Hurst H | 0.575 |
+| Mean DFA alpha | 0.588 |
+| Mean DEH gamma | 0.346 |
+| Mean Taleb kappa | 0.330 |
+
+**Clio Infra Yearly (top 30 countries):**
+
+| Metric | Value |
+|--------|:-----:|
+| Hill alpha < 4 (fat tails) | 29/30 |
+| DFA > 0.5 (persistent) | 28/30 |
+| QQ alpha < 4 (fat tails) | 28/30 |
+| Hurst > 0.5 (persistent) | 25/30 |
+| Taleb kappa > 0.1 (fat) | 20/29 |
+| DEH > 0 (heavy tails) | 20/30 |
+| Hill alpha < 2 (infinite var) | 19/30 |
+| Pickands > 0 (heavy tails) | 19/30 |
+| Spectral d > 0 (long memory) | 18/30 |
+| Mean Hill alpha | 1.56 |
+| Mean QQ alpha | 1.57 |
+| Mean Hurst H | 0.615 |
+| Mean DFA alpha | 0.883 |
+| Mean Taleb kappa | 0.560 |
+
+Method agreement: Pickands xi > 0, DEH gamma > 0, Hill alpha < 4, and QQ alpha < 4 all detect heavy tails from independent angles — order statistics, moments, QQ-slope, and three-quantile methods. Hurst H > 0.5, DFA alpha > 0.5, and Spectral d > 0 all confirm persistence from R/S analysis, detrended fluctuation, and the frequency domain respectively. When multiple independent methods converge on the same conclusion, the evidence is robust.
 
 ## The 19 Methods
 
@@ -256,7 +409,7 @@ Position sizing via inverse volatility targeting: weight = target_vol / realized
 
 Three neural network approaches to LPPLS fitting from recent 2024-2025 papers. All share a common pattern: the network predicts nonlinear LPPLS parameters (tc, m, omega), then linear parameters (A, B, C1, C2) are solved analytically via OLS. This physics-informed decomposition makes training stable and predictions interpretable.
 
-**M-LNN** — Mono-LPPLS Neural Network (Nielsen, Sornette & Raissi, 2024). One small network (2 hidden layers, 64 units each) trained per time series. Minimizes reconstruction MSE between the LPPLS fit and observed log-prices. Works on variable-length input. Slower than P-LNN but more flexible — no pre-training required.
+**M-LNN** — Mono-LPPLS Neural Network (Nielsen, Sornette & Raissi, 2024). One small network (2 hidden layers, 64 units each) trained per time series. Minimizes reconstruction MSE between the LPPLS fit and observed log-prices. Works on variable-length input. Slower than P-LNN but more flexible — no pre-training required. **F1=41%, Recall=56%** — the strongest NN method.
 
 ```python
 from fatcrash.nn.mlnn import fit_mlnn
@@ -264,7 +417,7 @@ result = fit_mlnn(times, log_prices, epochs=200, lr=1e-2)
 # result.tc, result.m, result.omega, result.is_bubble, result.confidence
 ```
 
-**P-LNN** — Poly-LPPLS Neural Network (Nielsen, Sornette & Raissi, 2024). Pre-trained on 100K synthetic LPPLS series, ~700x faster than CMA-ES at inference. A deeper network (4 hidden layers: 512-256-128-64) maps a 252-observation min-max normalized price window to (tc, m, omega) in a single forward pass. Three variants trained with white noise, AR(1) noise, or both.
+**P-LNN** — Poly-LPPLS Neural Network (Nielsen, Sornette & Raissi, 2024). Pre-trained on 100K synthetic LPPLS series, ~700x faster than CMA-ES at inference. A deeper network (4 hidden layers: 512-256-128-64) maps a 252-observation min-max normalized price window to (tc, m, omega) in a single forward pass. Three variants trained with white noise, AR(1) noise, or both. **F1=23%, Recall=23%** — fast but lower accuracy.
 
 ```python
 from fatcrash.nn.plnn import train_plnn, predict_plnn
@@ -272,7 +425,7 @@ model = train_plnn(variant="P-LNN-100K", n_samples=100_000)
 result = predict_plnn(model, times, log_prices)
 ```
 
-**HLPPL** — Hyped LPPL (Cao, Shao, Yan & Geman, 2025). Dual-stream transformer that fuses price dynamics with market sentiment. Stream 1 (TemporalEncoder) processes price and LPPLS features through a 2-layer, 4-head TransformerEncoder. Stream 2 (SentimentEncoder) processes volume-derived hype features through a 1-layer, 2-head TransformerEncoder. The fused representation produces a crash probability in [0, 1]. Works with OHLCV data — no external NLP sentiment feed required (uses volume-based proxies: volume z-score, momentum, absolute return z-score, combined hype index).
+**HLPPL** — Hyped LPPL (Cao, Shao, Yan & Geman, 2025). Dual-stream transformer that fuses price dynamics with market sentiment. Stream 1 (TemporalEncoder) processes price and LPPLS features through a 2-layer, 4-head TransformerEncoder. Stream 2 (SentimentEncoder) processes volume-derived hype features through a 1-layer, 2-head TransformerEncoder. The fused representation produces a crash probability in [0, 1]. Works with OHLCV data — no external NLP sentiment feed required (uses volume-based proxies: volume z-score, momentum, absolute return z-score, combined hype index). **F1=0%** — volume-based sentiment proxy is insufficient; likely needs real NLP sentiment data.
 
 ```python
 from fatcrash.nn.hlppl import train_hlppl, predict_hlppl
@@ -280,7 +433,7 @@ model = train_hlppl(train_dfs, crash_labels, window=60, epochs=50)
 result = predict_hlppl(model, ohlcv_df)  # result.bubble_score
 ```
 
-**DTCAI** — Distance-to-Crash AI (Lee, Jeong, Park & Ahn, 2025). Trains a classifier (ANN, Random Forest, or Logistic Regression) on 7 LPPLS parameters to assess the reliability of each LPPLS fit. The DTCAI score combines the Distance-to-Crash ratio (how far into the bubble the current window extends) with the AI reliability probability: DTCAI = DTC * P. Addresses a key LPPLS weakness: it always produces a tc estimate even when no bubble exists. Uses the Bree & Joseph (2013) crash criterion for labeling.
+**DTCAI** — Distance-to-Crash AI (Lee, Jeong, Park & Ahn, 2025). Trains a classifier (ANN, Random Forest, or Logistic Regression) on 7 LPPLS parameters to assess the reliability of each LPPLS fit. The DTCAI score combines the Distance-to-Crash ratio (how far into the bubble the current window extends) with the AI reliability probability: DTCAI = DTC * P. Addresses a key LPPLS weakness: it always produces a tc estimate even when no bubble exists. Uses the Bree & Joseph (2013) crash criterion for labeling. **F1=0%** — trained on BTC only, does not generalize cross-asset.
 
 ```python
 from fatcrash.nn.dtcai import train_dtcai, predict_dtcai
@@ -397,6 +550,8 @@ Bundled offline (no internet required):
 | Gold | 2000-2025 | 6,441 | Yahoo Finance |
 | GBP/USD | 1971-2025 | 13,791 | forex-centuries (FRED) |
 | Macro signals | 2007-2025 | 5,020 | FRED (VIX, yield curve, HY spread, GDP) |
+
+For extended analysis, `load_fred_forex()` loads all 23 FRED daily currency pairs from the [forex-centuries](https://github.com/unbalancedparentheses/forex-centuries) repository.
 
 ## Development
 

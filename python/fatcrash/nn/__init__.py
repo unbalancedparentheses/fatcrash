@@ -1,6 +1,6 @@
 """Neural network methods for LPPLS bubble detection.
 
-Implements Deep LPPLS (Nielsen, Sornette, Raissi 2024) and HLPPL (Cao et al. 2025).
+Implements Deep LPPLS (Nielsen, Sornette, Raissi 2024): M-LNN and P-LNN.
 
 DISCLAIMER: This software is for academic research and educational purposes only.
 It does not constitute financial advice. No warranty is provided regarding the

@@ -4,7 +4,7 @@
 
 The median tail index across 138 countries is alpha = 1.57. Standard risk models assume finite variance (alpha > 2) and often finite kurtosis (alpha > 4). For the majority of the world's currencies, these assumptions are empirically false. fatcrash detects crashes by measuring what actually matters: the tail.
 
-Python + Rust (PyO3). 19 methods. 293 tests. 500 years of data.
+Python + Rust (PyO3). 17 methods. 500 years of data.
 
 ```python
 from fatcrash.data.ingest import from_sample
@@ -100,9 +100,6 @@ All accuracy numbers are in-sample on historical data. Methods are tested on bot
 | GPD VaR | 10 | 73 | 14 | 66 | 12% | 42% | 19% |
 | Max-to-Sum | 12 | 86 | 27 | 64 | 12% | 31% | 18% |
 | Hill | 11 | 84 | 28 | 66 | 12% | 28% | 16% |
-| HLPPL | 0 | 0 | 39 | 150 | 0% | 0% | 0% |
-| DTCAI | 0 | 0 | 39 | 150 | 0% | 0% | 0% |
-
 **Why precision is low for tail/regime methods:** These methods detect distributional regime shifts (tail thickening, persistent dynamics), not crash-specific patterns. They fire in many non-crash periods because fat tails and persistence are pervasive in financial data. This is by design — they measure the *distributional regime*, not a specific crash. LPPLS and GSADF have higher precision because they detect bubble-specific structure.
 
 **The Sornette–Bouchaud debate on precision vs recall:**
@@ -113,7 +110,7 @@ Bouchaud takes a more skeptical view. In his work at CFM and in papers with Pott
 
 Both perspectives are reflected in fatcrash: LPPLS targets the mechanism (Sornette's approach), tail estimators measure the regime (which Bouchaud correctly notes is always fat-tailed), and the aggregator combines both — using Sornette-style bubble detection as the primary signal and Bouchaud-style regime measurement as confirmation.
 
-**NN method notes:** M-LNN (per-series fitting) is the strongest NN approach at F1=41%, comparable to GSADF. P-LNN (pre-trained, ~700x faster) underperforms at F1=23%. HLPPL and DTCAI both score 0% — HLPPL's volume-based sentiment proxy likely needs real NLP sentiment data, and DTCAI's reliability classifier (trained on BTC only) does not generalize cross-asset.
+**NN method notes:** M-LNN (per-series fitting) is the strongest NN approach at F1=41%, comparable to GSADF. P-LNN (pre-trained, ~700x faster) underperforms at F1=23%.
 
 #### Extended dataset (FRED forex + options backtester)
 
@@ -333,7 +330,7 @@ Germany, Austria, Argentina, and Portugal saturate at Taleb kappa = 1.0 — Cauc
 
 Method agreement: Pickands xi > 0, DEH gamma > 0, Hill alpha < 4, and QQ alpha < 4 all detect heavy tails from independent angles — order statistics, moments, QQ-slope, and three-quantile methods. Hurst H > 0.5, DFA alpha > 0.5, and Spectral d > 0 all confirm persistence from R/S analysis, detrended fluctuation, and the frequency domain respectively. When multiple independent methods converge on the same conclusion, the evidence is robust.
 
-## The 19 Methods
+## The 17 Methods
 
 ### Overview
 
@@ -355,9 +352,7 @@ Method agreement: Pickands xi > 0, DEH gamma > 0, Hill alpha < 4, and QQ alpha <
 | 14 | LPPLS + GSADF | Bubble | Bubble shape + explosive unit roots | critical time, confidence |
 | 15 | M-LNN | Bubble (NN) | Per-series LPPLS via neural network | tc, m, omega, confidence |
 | 16 | P-LNN | Bubble (NN) | Pre-trained LPPLS (~700x faster) | tc, m, omega, confidence |
-| 17 | HLPPL | Bubble (NN) | Dual-stream transformer + sentiment | bubble score [0, 1] |
-| 18 | DTCAI | Bubble (NN) | LPPLS reliability classifier + DTC | DTCAI score [0, 1] |
-| 19 | Price velocity | Structure | Volatility acceleration (cascade detection) | velocity signal |
+| 17 | Price velocity | Structure | Volatility acceleration (cascade detection) | velocity signal |
 
 ### Tail estimation
 
@@ -407,7 +402,7 @@ Position sizing via inverse volatility targeting: weight = target_vol / realized
 
 ### Neural network methods (requires `pip install fatcrash[deep]`)
 
-Three neural network approaches to LPPLS fitting from recent 2024-2025 papers. All share a common pattern: the network predicts nonlinear LPPLS parameters (tc, m, omega), then linear parameters (A, B, C1, C2) are solved analytically via OLS. This physics-informed decomposition makes training stable and predictions interpretable.
+Two neural network approaches to LPPLS fitting from Nielsen, Sornette & Raissi (2024). Both share a common pattern: the network predicts nonlinear LPPLS parameters (tc, m, omega), then linear parameters (A, B, C1, C2) are solved analytically via OLS. This physics-informed decomposition makes training stable and predictions interpretable.
 
 **M-LNN** — Mono-LPPLS Neural Network (Nielsen, Sornette & Raissi, 2024). One small network (2 hidden layers, 64 units each) trained per time series. Minimizes reconstruction MSE between the LPPLS fit and observed log-prices. Works on variable-length input. Slower than P-LNN but more flexible — no pre-training required. **F1=41%, Recall=56%** — the strongest NN method.
 
@@ -425,31 +420,13 @@ model = train_plnn(variant="P-LNN-100K", n_samples=100_000)
 result = predict_plnn(model, times, log_prices)
 ```
 
-**HLPPL** — Hyped LPPL (Cao, Shao, Yan & Geman, 2025). Dual-stream transformer that fuses price dynamics with market sentiment. Stream 1 (TemporalEncoder) processes price and LPPLS features through a 2-layer, 4-head TransformerEncoder. Stream 2 (SentimentEncoder) processes volume-derived hype features through a 1-layer, 2-head TransformerEncoder. The fused representation produces a crash probability in [0, 1]. Works with OHLCV data — no external NLP sentiment feed required (uses volume-based proxies: volume z-score, momentum, absolute return z-score, combined hype index). **F1=0%** — volume-based sentiment proxy is insufficient; likely needs real NLP sentiment data.
-
-```python
-from fatcrash.nn.hlppl import train_hlppl, predict_hlppl
-model = train_hlppl(train_dfs, crash_labels, window=60, epochs=50)
-result = predict_hlppl(model, ohlcv_df)  # result.bubble_score
-```
-
-**DTCAI** — Distance-to-Crash AI (Lee, Jeong, Park & Ahn, 2025). Trains a classifier (ANN, Random Forest, or Logistic Regression) on 7 LPPLS parameters to assess the reliability of each LPPLS fit. The DTCAI score combines the Distance-to-Crash ratio (how far into the bubble the current window extends) with the AI reliability probability: DTCAI = DTC * P. Addresses a key LPPLS weakness: it always produces a tc estimate even when no bubble exists. Uses the Bree & Joseph (2013) crash criterion for labeling. **F1=0%** — trained on BTC only, does not generalize cross-asset.
-
-```python
-from fatcrash.nn.dtcai import train_dtcai, predict_dtcai
-from fatcrash.nn.dtcai_data import generate_dtcai_dataset
-dataset = generate_dtcai_dataset(prices, window_size=504, n_fits_per_window=10)
-model = train_dtcai(dataset, model_type="ANN", epochs=50)
-result = predict_dtcai(model, times, log_prices)  # result.dtcai
-```
-
 ## Signal Aggregation
 
 Methods grouped into 4 independent categories. When 3+ categories agree, probability gets a +15% bonus.
 
 | Category | Methods | What it detects |
 |----------|---------|-----------------|
-| **Bubble** | LPPLS, GSADF, M-LNN, P-LNN, HLPPL, DTCAI | Super-exponential growth, explosive unit roots |
+| **Bubble** | LPPLS, GSADF, M-LNN, P-LNN | Super-exponential growth, explosive unit roots |
 | **Tail** | Hill, Pickands, DEH, QQ, Taleb Kappa, Max-Stability Kappa, Max-to-Sum, GPD | Tail thickening, distributional regime shifts |
 | **Regime** | Hurst, DFA, Spectral, Momentum reversal | Transition from mean-reverting to persistent dynamics, trend breaks |
 | **Structure** | Multiscale, LPPLS tc proximity, Price velocity | Cross-timeframe agreement, timing, cascade detection |
@@ -514,20 +491,17 @@ Rust (PyO3, _core.so)                Python
 │                            │       │ nn/                              │
 │ LPPLS: fit, confidence,    │──────▶│   mlnn.py      (M-LNN)          │
 │        solve_linear        │       │   plnn.py      (P-LNN)          │
-│                            │       │   hlppl.py     (HLPPL)          │
-│ Bubble: GSADF              │       │   dtcai.py     (DTCAI)          │
-│                            │       │   crash_labels.py (crash detect) │
-│ Multiscale                 │       │   dtcai_data.py (dataset gen)   │
 │                            │       │   lppls_torch.py (shared)       │
-│                            │       │   synthetic.py  (data gen)      │
-│                            │       │   sentiment.py  (volume proxy)  │
+│ Bubble: GSADF              │       │   synthetic.py  (data gen)      │
+│                            │       │                                  │
+│ Multiscale                 │       │                                  │
 │                            │       │                                  │
 │ rayon: parallel CMA-ES,    │       │ aggregator/signals.py            │
 │        GSADF, confidence   │       │ cli/ viz/ service/ data/         │
 └────────────────────────────┘       └──────────────────────────────────┘
 ```
 
-All 15 classical estimators are implemented in Rust and exposed to Python via PyO3. The computationally intensive methods (LPPLS CMA-ES, GSADF, confidence) use rayon for parallelization. The 4 neural network methods are in Python (PyTorch/sklearn) and call `lppls_solve_linear` from Rust for the analytical linear parameter solve.
+All 15 classical estimators are implemented in Rust and exposed to Python via PyO3. The computationally intensive methods (LPPLS CMA-ES, GSADF, confidence) use rayon for parallelization. The 2 neural network methods are in Python (PyTorch) and call `lppls_solve_linear` from Rust for the analytical linear parameter solve.
 
 | Component | Language | Why |
 |-----------|----------|-----|
@@ -536,7 +510,7 @@ All 15 classical estimators are implemented in Rust and exposed to Python via Py
 | GSADF test | Rust | O(n^2) BSADF + Monte Carlo, parallelized |
 | GEV/GPD fitting | Rust | Rolling EVT needs speed |
 | All tail & regime estimators | Rust | Called at every rolling window step |
-| M-LNN, P-LNN, HLPPL, DTCAI | Python (PyTorch/sklearn) | GPU support, autograd for training |
+| M-LNN, P-LNN | Python (PyTorch) | GPU support, autograd for training |
 | Data ingestion, viz, CLI | Python | Ecosystem (pandas, plotly, typer, FastAPI) |
 
 ## Sample Data
@@ -561,7 +535,7 @@ Requires [Nix](https://nixos.org/) with flakes enabled.
 nix develop                  # Enter dev shell (Rust, Python 3.13, maturin, uv)
 make setup                   # Install Python deps + build Rust extension
 make build                   # Recompile Rust, install into venv
-make test                    # 44 Rust + 249 Python = 293 tests
+make test                    # Run all Rust + Python tests
 make lint                    # cargo clippy + cargo fmt --check
 python analysis/accuracy_report.py   # Full analysis across all methods and timescales
 ```
@@ -614,9 +588,7 @@ pip install fatcrash[deep]   # Adds PyTorch dependency
 ### Neural Network Methods
 
 - Nielsen, M., Sornette, D. & Raissi, M. (2024). "Deep Learning for LPPLS: M-LNN and P-LNN." [arXiv:2405.12803](https://arxiv.org/abs/2405.12803) — **Implemented** (M-LNN, P-LNN)
-- Cao, G., Shao, L., Yan, H. & Geman, H. (2025). "HLPPL: Hyped LPPL with Dual-Stream Transformer." [arXiv:2510.10878](https://arxiv.org/abs/2510.10878) — **Implemented**
 - Ma, J. & Li, C. (2024). "Detecting Market Bubbles: A Generalized LPPLS Neural Network Model." *Economics Letters*, 244, 112003. [DOI:10.1016/j.econlet.2024.112003](https://doi.org/10.1016/j.econlet.2024.112003) — Future work (extends P-LNN, paywalled)
-- Lee, G., Jeong, M., Park, T. & Ahn, K. (2025). "More Than Ex-Post Fitting: LPPL and Its AI-Based Classification." *Humanities and Social Sciences Communications*, 12, 236. [DOI:10.1038/s41599-025-05920-7](https://doi.org/10.1038/s41599-025-05920-7) — **Implemented** (DTCAI)
 - Sakurai, Y. & Chen, Z. (2024). "Forecasting Tail Risk via Neural Networks with Asymptotic Expansions." *IMF Working Paper* WP/24/99. [IMF](https://www.imf.org/en/Publications/WP/Issues/2024/05/10/Forecasting-Tail-Risk-via-Neural-Networks-with-Asymptotic-Expansions-548841) — Future work (CoFiE-NN, VaR-focused)
 
 ### Momentum & Trend-Following

@@ -1,7 +1,7 @@
 """Differentiable LPPLS utilities for PyTorch-based methods.
 
 Provides a differentiable design matrix, linear solver, normalization,
-and filtering — shared by M-LNN, P-LNN, and HLPPL.
+and filtering — shared by M-LNN and P-LNN.
 
 Reference: Nielsen, Sornette, Raissi (2024) "Deep Learning for LPPLS", arXiv:2405.12803
 
@@ -35,7 +35,7 @@ class LPPLSNNResult:
     rss: float
     is_bubble: bool
     confidence: float
-    method: str  # "M-LNN", "P-LNN", or "HLPPL"
+    method: str  # "M-LNN" or "P-LNN"
 
 
 def lppls_design_matrix(

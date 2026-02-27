@@ -35,14 +35,12 @@ class CrashSignal:
 # Updated weights including NN methods
 DEFAULT_WEIGHTS = {
     # Bubble detectors (highest weight — best accuracy)
-    "lppls_confidence": 0.16,
-    "lppls_tc_proximity": 0.05,
-    "gsadf_bubble": 0.10,
+    "lppls_confidence": 0.18,
+    "lppls_tc_proximity": 0.06,
+    "gsadf_bubble": 0.12,
     # NN bubble detectors
-    "mlnn_signal": 0.05,
-    "plnn_signal": 0.05,
-    "hlppl_signal": 0.05,
-    "dtcai_signal": 0.05,
+    "mlnn_signal": 0.06,
+    "plnn_signal": 0.06,
     # Tail estimators
     "gpd_var_exceedance": 0.07,
     "kappa_regime": 0.05,
@@ -95,7 +93,7 @@ def aggregate_signals(
     # Count how many independent method categories have elevated signals
     categories = {
         "bubble": ["lppls_confidence", "gsadf_bubble",
-                    "mlnn_signal", "plnn_signal", "hlppl_signal", "dtcai_signal"],
+                    "mlnn_signal", "plnn_signal"],
         "tail": ["kappa_regime", "taleb_kappa", "hill_thinning", "pickands_thinning",
                  "gpd_var_exceedance", "deh_thinning", "qq_thinning", "maxsum_signal"],
         "regime": ["hurst_trending", "dfa_trending", "spectral_memory",
@@ -288,23 +286,6 @@ def plnn_signal(confidence: float, is_bubble: bool) -> float:
     if is_bubble:
         return np.clip(confidence, 0.0, 1.0)
     return np.clip(confidence * 0.5, 0.0, 1.0)
-
-
-def hlppl_signal(bubble_score: float) -> float:
-    """Convert HLPPL bubble score [0,1] directly to signal."""
-    if np.isnan(bubble_score):
-        return 0.0
-    return np.clip(bubble_score, 0.0, 1.0)
-
-
-def dtcai_signal(dtcai_score: float) -> float:
-    """Convert DTCAI score [0,1] directly to signal.
-
-    DTCAI = DTC * reliability, already in [0, 1].
-    """
-    if np.isnan(dtcai_score):
-        return 0.0
-    return np.clip(dtcai_score, 0.0, 1.0)
 
 
 # ── Momentum & velocity signal converters ─────────────────

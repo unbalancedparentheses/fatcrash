@@ -1,10 +1,10 @@
 """Accuracy analysis: honest precision/recall/F1 for every method against historical drawdowns.
 
-Evaluates all 17 methods (13 classical + 4 NN) on both crash windows (true positives)
+Evaluates all 15 methods (13 classical + 2 NN) on both crash windows (true positives)
 and non-crash windows (false positives), producing precision, recall, and F1 scores.
 
 Run:
-    python analysis/accuracy_report.py           # All 17 methods
+    python analysis/accuracy_report.py           # All 15 methods
     python analysis/accuracy_report.py --skip-nn  # Classical methods only
 
 All accuracy numbers are in-sample on historical data. This is not financial advice.
@@ -152,7 +152,7 @@ def sample_non_crash_windows(df, crash_events, n_samples=50, window=120, min_dis
 
 def test_method_on_drawdown(df, peak_idx, window=120,
                             run_nn=False,
-                            plnn_model=None, hlppl_model=None, dtcai_model=None):
+                            plnn_model=None):
     """Test all methods on a pre-crash window, comparing to a baseline period.
 
     Returns (results, components) where:
@@ -351,32 +351,12 @@ def test_method_on_drawdown(df, peak_idx, window=120,
             except Exception:
                 results["plnn"] = None
 
-        # HLPPL
-        if hlppl_model is not None:
-            try:
-                from fatcrash.nn.hlppl import predict_hlppl
-                hlppl_res = predict_hlppl(hlppl_model, df.iloc[pre_start:pre_end], window=60)
-                results["hlppl"] = hlppl_res.bubble_score > 0.5
-                components["hlppl_signal"] = sig.hlppl_signal(hlppl_res.bubble_score)
-            except Exception:
-                results["hlppl"] = None
-
-        # DTCAI
-        if dtcai_model is not None:
-            try:
-                from fatcrash.nn.dtcai import predict_dtcai
-                dtcai_res = predict_dtcai(dtcai_model, pre_t, pre_lp)
-                results["dtcai"] = dtcai_res.dtcai > 0.5
-                components["dtcai_signal"] = sig.dtcai_signal(dtcai_res.dtcai)
-            except Exception:
-                results["dtcai"] = None
-
     return results, components
 
 
 def test_method_on_non_crash(df, center_idx, window=120,
                              run_nn=False,
-                             plnn_model=None, hlppl_model=None, dtcai_model=None):
+                             plnn_model=None):
     """Test all methods on a non-crash window. Same logic as drawdown test.
 
     Returns (results, components) — same as test_method_on_drawdown.
@@ -384,7 +364,7 @@ def test_method_on_non_crash(df, center_idx, window=120,
     return test_method_on_drawdown(
         df, center_idx, window=window,
         run_nn=run_nn,
-        plnn_model=plnn_model, hlppl_model=hlppl_model, dtcai_model=dtcai_model,
+        plnn_model=plnn_model,
     )
 
 
@@ -419,8 +399,8 @@ def compute_metrics(tp_results, fp_results, methods):
 
 
 def train_nn_models(datasets):
-    """Pre-train NN models for evaluation. Returns (plnn_model, hlppl_model, dtcai_model)."""
-    plnn_model = hlppl_model = dtcai_model = None
+    """Pre-train NN models for evaluation. Returns plnn_model."""
+    plnn_model = None
 
     # P-LNN: train on synthetic data
     try:
@@ -431,43 +411,7 @@ def train_nn_models(datasets):
     except Exception as e:
         print(f"  P-LNN training failed: {e}")
 
-    # HLPPL: train on BTC labeled windows
-    try:
-        from fatcrash.nn.hlppl import train_hlppl
-        btc_df = datasets["btc"]
-        close = btc_df["close"].values
-        train_dfs = []
-        labels = []
-        win = 60
-        for i in range(win, len(close) - 30, win):
-            chunk = btc_df.iloc[i - win:i].copy()
-            future = close[i:i + 30]
-            is_crash = 1 if len(future) > 0 and (future.min() - close[i]) / close[i] < -0.15 else 0
-            train_dfs.append(chunk)
-            labels.append(is_crash)
-        print(f"  Training HLPPL on {len(train_dfs)} BTC windows ({sum(labels)} crash)...")
-        hlppl_model = train_hlppl(train_dfs, labels, window=win, epochs=20, seed=42)
-        print("  HLPPL ready.")
-    except Exception as e:
-        print(f"  HLPPL training failed: {e}")
-
-    # DTCAI: train on BTC prices
-    try:
-        from fatcrash.nn.dtcai import train_dtcai
-        from fatcrash.nn.dtcai_data import generate_dtcai_dataset
-        btc_prices = datasets["btc"]["close"].values
-        print("  Generating DTCAI dataset from BTC...")
-        ds = generate_dtcai_dataset(btc_prices, window_size=504, step_size=42, n_fits_per_window=5, seed=42)
-        if len(ds.X) > 0:
-            print(f"  Training DTCAI on {len(ds.X)} samples ({ds.y.sum()} reliable)...")
-            dtcai_model = train_dtcai(ds, model_type="RF", seed=42)
-            print("  DTCAI ready.")
-        else:
-            print("  DTCAI: no training samples generated.")
-    except Exception as e:
-        print(f"  DTCAI training failed: {e}")
-
-    return plnn_model, hlppl_model, dtcai_model
+    return plnn_model
 
 
 # ── Main ───────────────────────────────────────────────────
@@ -486,12 +430,12 @@ def main():
         datasets[name] = from_sample(name)
 
     # ── Train NN models if needed ──────────────────────
-    plnn_model = hlppl_model = dtcai_model = None
+    plnn_model = None
     if run_nn:
         print("=" * 70)
         print("TRAINING NN MODELS")
         print("=" * 70)
-        plnn_model, hlppl_model, dtcai_model = train_nn_models(datasets)
+        plnn_model = train_nn_models(datasets)
         print()
 
     # ══════════════════════════════════════════════
@@ -515,7 +459,7 @@ def main():
             res, comps = test_method_on_drawdown(
                 df, ev["peak_idx"],
                 run_nn=run_nn,
-                plnn_model=plnn_model, hlppl_model=hlppl_model, dtcai_model=dtcai_model,
+                plnn_model=plnn_model,
             )
             if res is None:
                 continue
@@ -559,7 +503,7 @@ def main():
             res, comps = test_method_on_non_crash(
                 df, nc["center_idx"],
                 run_nn=run_nn,
-                plnn_model=plnn_model, hlppl_model=hlppl_model, dtcai_model=dtcai_model,
+                plnn_model=plnn_model,
             )
             if res is None:
                 continue
@@ -580,7 +524,7 @@ def main():
         "kappa", "taleb_kappa", "pickands", "deh", "qq",
         "gpd_var", "maxsum", "spectral", "hill",
     ]
-    nn_methods = ["mlnn", "plnn", "hlppl", "dtcai"] if run_nn else []
+    nn_methods = ["mlnn", "plnn"] if run_nn else []
     all_methods = classical_methods + nn_methods
 
     metrics = compute_metrics(tp_records, fp_records, all_methods)
@@ -703,8 +647,7 @@ def main():
                 res, comps = test_method_on_drawdown(
                     df_fx, ev["peak_idx"],
                     run_nn=run_nn,
-                    plnn_model=plnn_model, hlppl_model=hlppl_model,
-                    dtcai_model=dtcai_model,
+                    plnn_model=plnn_model,
                 )
                 if res is None:
                     continue
@@ -720,8 +663,7 @@ def main():
                 res, comps = test_method_on_non_crash(
                     df_fx, nc["center_idx"],
                     run_nn=run_nn,
-                    plnn_model=plnn_model, hlppl_model=hlppl_model,
-                    dtcai_model=dtcai_model,
+                    plnn_model=plnn_model,
                 )
                 if res is None:
                     continue
@@ -765,8 +707,7 @@ def main():
                 res, comps = test_method_on_drawdown(
                     df_opt, ev["peak_idx"],
                     run_nn=run_nn,
-                    plnn_model=plnn_model, hlppl_model=hlppl_model,
-                    dtcai_model=dtcai_model,
+                    plnn_model=plnn_model,
                 )
                 if res is None:
                     continue
@@ -782,8 +723,7 @@ def main():
                 res, comps = test_method_on_non_crash(
                     df_opt, nc["center_idx"],
                     run_nn=run_nn,
-                    plnn_model=plnn_model, hlppl_model=hlppl_model,
-                    dtcai_model=dtcai_model,
+                    plnn_model=plnn_model,
                 )
                 if res is None:
                     continue
@@ -1198,7 +1138,7 @@ def main():
     # ══════════════════════════════════════════════
     # Part 7: Cross-Method Summary
     # ══════════════════════════════════════════════
-    n_methods = 17 if run_nn else 13
+    n_methods = 15 if run_nn else 13
     print("\n" + "=" * 70)
     print(f"CROSS-METHOD SUMMARY: ALL {n_methods} METHODS")
     print("=" * 70)
@@ -1328,18 +1268,12 @@ def main():
     if run_nn:
         mlnn_m = metrics.get("mlnn", {})
         plnn_m = metrics.get("plnn", {})
-        hlppl_m = metrics.get("hlppl", {})
-        dtcai_m = metrics.get("dtcai", {})
         print(f"""
   NN METHODS (in-sample, requires PyTorch):
   9. M-LNN:  Recall={mlnn_m.get('recall', 0):.0%}, Precision={mlnn_m.get('precision', 0):.0%}, F1={mlnn_m.get('f1', 0):.0%}
      Per-series fitting, no pre-training. Slower but flexible.
   10. P-LNN: Recall={plnn_m.get('recall', 0):.0%}, Precision={plnn_m.get('precision', 0):.0%}, F1={plnn_m.get('f1', 0):.0%}
-     Pre-trained on synthetic data, ~700x faster at inference.
-  11. HLPPL: Recall={hlppl_m.get('recall', 0):.0%}, Precision={hlppl_m.get('precision', 0):.0%}, F1={hlppl_m.get('f1', 0):.0%}
-     Dual-stream transformer with volume-based sentiment proxy.
-  12. DTCAI: Recall={dtcai_m.get('recall', 0):.0%}, Precision={dtcai_m.get('precision', 0):.0%}, F1={dtcai_m.get('f1', 0):.0%}
-     LPPLS reliability classifier (trained on BTC, tested cross-asset).""")
+     Pre-trained on synthetic data, ~700x faster at inference.""")
 
     print()
 

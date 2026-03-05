@@ -74,6 +74,7 @@ DEFAULT_WEIGHTS = {
     "jump_risk_signal": 0.03,  # legacy BNS fraction — kept for backward compat
     "csd_warning": 0.03,
     "hamilton_stress": 0.03,
+    "amihud_spike": 0.03,
     # Market regime signals (placeholder weights — require external data sources)
     "vrp_signal": 0.0,
     "sofr_ois_z": 0.0,
@@ -495,6 +496,49 @@ def hamilton_stress_signal(prob_stressed: float) -> float:
     if np.isnan(prob_stressed):
         return 0.0
     return np.clip(prob_stressed, 0.0, 1.0)
+
+
+def realized_skewness_signal(skew: float) -> float:
+    """Signal from realized skewness. Negative skew = left-tail risk = higher signal.
+
+    Amaya et al. (2015): most negative skewness quintile earns 24 bps/week less.
+    """
+    if np.isnan(skew):
+        return 0.0
+    # More negative = higher crash signal
+    if skew >= 0:
+        return 0.0
+    # Scale: -0.5 = moderate (0.5), -1.0+ = full signal (1.0)
+    return np.clip(-skew, 0.0, 1.0)
+
+
+def amihud_spike_signal(amihud_current: float, amihud_baseline: float) -> float:
+    """Signal from Amihud illiquidity spike: current vs baseline.
+
+    When current illiquidity exceeds baseline by 2x+, liquidity is drying up.
+    """
+    if np.isnan(amihud_current) or np.isnan(amihud_baseline) or amihud_baseline <= 0:
+        return 0.0
+    ratio = amihud_current / amihud_baseline
+    if ratio <= 1.0:
+        return 0.0
+    # Scale: 1x = no spike, 2x = moderate (0.5), 3x+ = full signal (1.0)
+    return np.clip((ratio - 1.0) / 2.0, 0.0, 1.0)
+
+
+def absorption_ratio_signal(ar: float, n_assets: int = 3) -> float:
+    """Signal from absorption ratio. High AR = systemic coupling = crisis.
+
+    For n=3 assets, random baseline ~0.33; crisis level ~0.7+.
+    """
+    if np.isnan(ar) or n_assets < 2:
+        return 0.0
+    baseline = 1.0 / n_assets
+    # Scale from baseline to 0.9
+    span = 0.9 - baseline
+    if span <= 0:
+        return 0.0
+    return np.clip((ar - baseline) / span, 0.0, 1.0)
 
 
 def eigenvalue_signal(lambda_frac: float) -> float:

@@ -106,6 +106,18 @@ def create_app() -> FastAPI:
         except Exception:
             pass
 
+        try:
+            if "volume" in df.columns:
+                from fatcrash._core import amihud_illiquidity
+                from fatcrash.aggregator.signals import amihud_spike_signal
+                vol_arr = df["volume"].values[1:]
+                if len(vol_arr) == len(returns):
+                    short_a = amihud_illiquidity(returns, vol_arr.astype(float), min(21, len(returns)))
+                    long_a = amihud_illiquidity(returns, vol_arr.astype(float), min(63, len(returns)))
+                    components["amihud_spike"] = amihud_spike_signal(short_a, long_a)
+        except Exception:
+            pass
+
         signal = aggregate_signals(components)
         return DetectionResponse(
             asset=req.asset,

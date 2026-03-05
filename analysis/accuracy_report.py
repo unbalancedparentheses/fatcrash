@@ -29,6 +29,7 @@ from fatcrash._core import (
     dfa_exponent, deh_estimator, qq_estimator, maxsum_ratio, spectral_exponent,
     lppls_confidence,
     realized_variance, bipower_variation, jump_variance,
+    amihud_illiquidity,
 )
 from fatcrash.indicators.regime_indicator import estimate_hamilton, estimate_csd_on_vol, estimate_rv_spike
 from fatcrash.aggregator import signals as sig
@@ -369,6 +370,27 @@ def test_method_on_drawdown(df, peak_idx, window=120,
     except Exception:
         results["csd"] = None
 
+    # Amihud illiquidity (needs volume column)
+    try:
+        if "volume" in df.columns:
+            pre_vol = df.iloc[pre_start:pre_end]["volume"].values[1:]  # align with returns
+            base_vol = df.iloc[base_start:base_end]["volume"].values[1:]
+            if len(pre_vol) == len(pre_ret) and len(base_vol) == len(base_ret):
+                w = min(21, len(pre_ret))
+                pre_amihud = amihud_illiquidity(pre_ret, pre_vol.astype(float), w)
+                base_amihud = amihud_illiquidity(base_ret, base_vol.astype(float), w)
+                if not (np.isnan(pre_amihud) or np.isnan(base_amihud)):
+                    results["amihud"] = pre_amihud > base_amihud
+                    components["amihud_spike"] = sig.amihud_spike_signal(pre_amihud, base_amihud)
+                else:
+                    results["amihud"] = None
+            else:
+                results["amihud"] = None
+        else:
+            results["amihud"] = None
+    except Exception:
+        results["amihud"] = None
+
     # ── NN methods ─────────────────────────────────
     if run_nn and _TORCH_AVAILABLE:
         pre_lp = log_prices(df.iloc[pre_start:pre_end])
@@ -566,6 +588,7 @@ def main():
         "kappa", "taleb_kappa", "pickands", "deh", "qq",
         "gpd_var", "maxsum", "spectral", "hill",
         "rv_spike", "hamilton", "csd",
+        "amihud",
     ]
     nn_methods = ["mlnn", "plnn"] if run_nn else []
     all_methods = classical_methods + nn_methods

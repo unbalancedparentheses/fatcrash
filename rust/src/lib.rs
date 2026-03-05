@@ -43,6 +43,21 @@ fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
         tail::velocity::price_velocity_rolling,
         m
     )?)?;
+    m.add_function(wrap_pyfunction!(tail::skewness::realized_skewness, m)?)?;
+    m.add_function(wrap_pyfunction!(
+        tail::skewness::realized_skewness_rolling,
+        m
+    )?)?;
+    m.add_function(wrap_pyfunction!(tail::amihud::amihud_illiquidity, m)?)?;
+    m.add_function(wrap_pyfunction!(
+        tail::amihud::amihud_illiquidity_rolling,
+        m
+    )?)?;
+    m.add_function(wrap_pyfunction!(tail::absorption::absorption_ratio, m)?)?;
+    m.add_function(wrap_pyfunction!(
+        tail::absorption::absorption_ratio_rolling,
+        m
+    )?)?;
 
     // EVT
     m.add_function(wrap_pyfunction!(evt::gpd::gpd_fit, m)?)?;

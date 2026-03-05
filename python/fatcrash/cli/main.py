@@ -180,6 +180,25 @@ def detect(
                 f"σ_N={hmm.sigma_normal:.4f} σ_S={hmm.sigma_stressed:.4f}",
                 hmm_status,
             )
+
+        # Amihud illiquidity
+        if "volume" in df.columns:
+            from fatcrash._core import amihud_illiquidity
+            vol_arr = df["volume"].values[1:].astype(float)  # align with returns
+            if len(vol_arr) == len(returns):
+                short_amihud = amihud_illiquidity(returns, vol_arr, min(21, len(returns)))
+                long_amihud = amihud_illiquidity(returns, vol_arr, min(63, len(returns)))
+                if not (np.isnan(short_amihud) or np.isnan(long_amihud)) and long_amihud > 0:
+                    ratio = short_amihud / long_amihud
+                    amihud_status = "[red]!!![/]" if ratio > 3.0 else (
+                        "[yellow]![/]" if ratio > 2.0 else "[green]OK[/]"
+                    )
+                    table.add_row(
+                        "Amihud illiq.",
+                        f"{ratio:.2f}x",
+                        f"short={short_amihud:.2e}",
+                        amihud_status,
+                    )
     except Exception as e:
         table.add_row("Regime", "error", str(e), "[red]ERR[/]")
 

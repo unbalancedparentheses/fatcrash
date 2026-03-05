@@ -4,7 +4,7 @@
 
 The median tail index across 138 countries is alpha = 1.57. Standard risk models assume finite variance (alpha > 2) and often finite kurtosis (alpha > 4). For the majority of the world's currencies, these assumptions are empirically false. fatcrash detects crashes by measuring what actually matters: the tail.
 
-Python + Rust (PyO3). 17 methods. 500 years of data.
+Python + Rust (PyO3). 17 crash detection methods + 7 market regime signal families. 500 years of data.
 
 ```python
 from fatcrash.data.ingest import from_sample
@@ -354,6 +354,18 @@ Method agreement: Pickands xi > 0, DEH gamma > 0, Hill alpha < 4, and QQ alpha <
 | 16 | P-LNN | Bubble (NN) | Pre-trained LPPLS (~700x faster) | tc, m, omega, confidence |
 | 17 | Price velocity | Structure | Volatility acceleration (cascade detection) | velocity signal |
 
+**Market regime signal families** (macro/microstructure, not yet implemented — see [Market Regime Signals](#market-regime-signals)):
+
+| # | Family | Signals | What it detects |
+|---|--------|---------|-----------------|
+| R1 | Risk Premium | VRP, jump risk | Variance and tail-risk compensation |
+| R2 | Liquidity | SOFR-OIS, TED, Amihud, xccy basis, Treasury/equity vol ratio | Funding stress, market illiquidity |
+| R3 | Volatility Regime | VIX slope, SKEW, MOVE, VVIX | Vol term structure inversion, vol-of-vol |
+| R4 | Credit & Macro | OFR FSI, STLFSI, credit spreads, EBP, yield curve, term premium | Credit stress, macro deterioration |
+| R5 | Structure & Flows | Cross-asset eigenvalue, COT, ETF flows | Diversification breakdown, positioning extremes |
+| R6 | Contagion | CoVaR, MES, SRISK | Systemic risk, institution-level stress |
+| R7 | Sentiment | FOMC tone, news uncertainty | Policy uncertainty, narrative shifts |
+
 ### Tail estimation
 
 **Hill estimator** (Hill, 1975). Estimates alpha from the k largest order statistics: alpha = [1/k * sum log(X_(i) / X_(k+1))]^(-1). The tail index governs tail decay: P(X > x) ~ x^(-alpha). Alpha < 2 means infinite variance; alpha < 4 means infinite kurtosis. Includes Huisman et al. (2001) small-sample bias correction.
@@ -433,6 +445,108 @@ Methods grouped into 4 independent categories. When 3+ categories agree, probabi
 
 Indicators are also computed at daily, 3-day, and weekly frequencies. A signal at one scale may be noise; a signal across all three is structural.
 
+## Market Regime Signals
+
+Complementing the 17 crash detection methods above, fatcrash includes a regime signal framework that combines macro, funding, credit, and microstructure indicators to classify the current market state as risk-on, neutral, or risk-off. These signals answer a different question than tail estimators: not "are tails thickening?" but "is the macro-financial environment shifting toward stress?"
+
+The goal is transparent, inspectable signals grounded in the academic literature — not black-box scores. Each signal is normalized to a common scale (z-score or percentile rank), aggregated into thematic buckets, and combined into a single regime score.
+
+### Signal Families
+
+**Risk Premium** — Variance risk premium (VRP) and jump/tail-risk premium. VRP = implied variance minus realized variance. When VRP is high, investors are paying more for variance protection — a sign of fear. When VRP goes negative (realized vol exceeds implied), the market is already in acute stress. Jump risk premium isolates the compensation for discontinuous moves using BNS bipower variation (Barndorff-Nielsen & Shephard, 2004). References: Bollerslev, Tauchen & Zhou (2009); Bekaert & Hoerova (2014); Bollerslev & Todorov (2011).
+
+**Liquidity & Funding Stress** — SOFR-OIS spread (pure funding stress), TED spread (discontinued April 2022, substitute with SOFR vs 3M T-bill), Amihud illiquidity (|return|/volume), cross-currency basis (deviation from covered interest parity — negative USD basis = global dollar shortage), Treasury/equity realized vol ratio (when Treasury vol exceeds equity vol, the safe haven is broken). References: Brunnermeier & Pedersen (2009); Pastor & Stambaugh (2003); Flood, Liechty & Piontek (2015).
+
+**Volatility Regime** — VIX term structure slope (backwardation = near-term fear), SKEW (tail risk pricing), MOVE (bond vol), VVIX (vol-of-vol). Negative VIX slope is the single fastest stress signal — it inverts within hours of a shock. VVIX captures uncertainty about uncertainty itself.
+
+**Credit & Macro** — OFR Financial Stress Index, STLFSI, credit spreads (HY OAS, BBB OAS, Baa-Aaa), excess bond premium (EBP — the component of credit spreads driven by risk appetite, not default risk; Gilchrist & Zakrajsek, 2012), yield curve (10Y-2Y, 10Y-3M), ACM term premium. EBP is the most predictive component for recessions. The 10Y-3M spread has inverted before every US recession since 1960.
+
+**Structure & Flows** — Cross-asset correlation eigenvalue (largest eigenvalue of rolling correlation matrix — when it approaches 1.0, all assets move together and diversification breaks down), CFTC COT net speculative positioning, ETF flows. Rising eigenvalue + rising variance is the critical slowing down signature.
+
+**Contagion & Systemic Risk** — CoVaR (system VaR conditional on institution distress; Adrian & Brunnermeier, 2016), MES (marginal expected shortfall), SRISK (expected capital shortfall in crisis; Brownlees & Engle, 2017). Pre-computed data available from NYU Stern V-Lab.
+
+**Sentiment** — FOMC communication tone (using Loughran-McDonald financial sentiment dictionary), Baker-Bloom-Davis Economic Policy Uncertainty index (FRED: `USEPUINDXD`).
+
+### Key Algorithms
+
+**Realized Variance.** From daily returns: `RV_t = (252/W) * sum(r_i^2)`. Parkinson estimator (from OHLC): `RV_Park = (252/(4*ln2*W)) * sum(ln(H/L)^2)`. Garman-Klass (most efficient from OHLC): `GK_i = 0.5*(ln(H/L))^2 - (2*ln2-1)*(ln(C/O))^2`.
+
+**Variance Risk Premium.** `VRP_t = (VIX/100)^2/12 - RV_monthly`. VRP > 0 is normal (paying for protection). VRP < 0 means realized vol exceeds implied (acute stress).
+
+**Jump Risk Decomposition.** BNS bipower variation: `BV_t = (pi/2) * (1/(W-1)) * sum(|r_i| * |r_{i-1}|)`. Jump variance: `JV_t = max(RV_t - BV_t, 0)`. The jump component dominates return predictability (Bollerslev & Todorov, 2011).
+
+**Hamilton Filter (2-state HMM).** States: normal (s=0) and stressed (s=1). Each state has its own mean and variance. Forward filter: predict → compute densities → update via Bayes' rule. Parameter estimation via EM (Baum-Welch). Use log-space for numerical stability. Multiple random restarts to avoid local optima.
+
+**Hawkes Process Branching Ratio.** Intensity: `lambda(t) = mu + alpha * sum(exp(-beta*(t-t_i)))`. Branching ratio `n = alpha/beta`. n < 1 = stable; n → 1 = critical (self-excitation dominates). MLE with analytic gradient, optimize via L-BFGS-B. Event definition: VIX threshold crossings or large order flow imbalances.
+
+**Critical Slowing Down.** Near a tipping point, systems recover more slowly from perturbations. Observable: rising AR(1) coefficient AND rising variance simultaneously over rolling windows. Apply to credit spreads, VIX, and the cross-asset correlation eigenvalue.
+
+### Regime Scoring
+
+Signals are normalized (rolling z-score or percentile rank), aggregated into 7 buckets (mean of member signals), then combined:
+
+```
+regime_score = -0.30 * risk_premium
+             - 0.25 * liquidity
+             - 0.20 * volatility
+             - 0.15 * credit_macro
+             - 0.10 * structure_flows
+             - w_contagion * contagion
+             - w_sentiment * sentiment
+```
+
+Negative weights: higher stress → more risk-off. Smooth with EMA (alpha=0.2) to prevent noisy label switching.
+
+**Labels:** risk_on (score >= +0.50), neutral (-0.50 < score < +0.50), risk_off (score <= -0.50).
+
+**Confidence:** `min(1, |score| / 2)`. Top-3 buckets by absolute impact reported as contributors.
+
+### Historical Calibration
+
+| Signal | Sept 2008 (Lehman) | Mar 2020 (COVID) | Feb 2018 (Volmageddon) | Sept 2019 (Repo) | 2022 (Rate Shock) | 2013 (Taper Tantrum) |
+|--------|:---:|:---:|:---:|:---:|:---:|:---:|
+| VIX | ~80 | ~85 | 14→37 | ~18 | ~35 | ~21 |
+| HY OAS | >1000 bps | ~1000 bps | ~330 bps | ~400 bps | ~600 bps | ~500 bps |
+| SOFR/TED | ~450 bps | ~50 bps | unchanged | repo 600 bps | ~20 bps | ~15 bps |
+| VRP | negative | negative | brief inversion | normal | positive | positive |
+| Cross-asset λ | ~1.0 | ~1.0 | brief spike | low | moderate | low |
+| **Expected** | **risk-off** | **risk-off** | **brief risk-off (vol only)** | **brief risk-off (liquidity only)** | **neutral→risk-off** | **neutral** |
+
+2008 and 2020 are unambiguous (all buckets fire). Feb 2018 (Volmageddon) is the purest vol event — only the volatility bucket fires. Sept 2019 repo crisis is the mirror: only liquidity fires. These single-bucket events test that no one bucket dominates the regime call.
+
+### Regime Data Sources
+
+| Source | Signals | Frequency | Access |
+|--------|---------|-----------|--------|
+| FRED API | VIX, spreads, yield curve, STLFSI, EPU | Daily/Weekly | Free |
+| OFR | Financial Stress Index | Daily | Free |
+| Cboe | VIX futures, SKEW, VVIX | Daily | Free (research) |
+| NY Fed | ACM term premium | Monthly | Free |
+| CFTC | COT net speculative positions | Weekly (3-day lag) | Free |
+| NYU V-Lab | CoVaR, MES, SRISK | Daily | Free |
+
+**Frequency alignment:** maintain all signals at daily resolution. Forward-fill weekly/monthly series. Mark signals stale after 5 business days.
+
+**Warmup periods:** Rolling z-score requires 63 days minimum. Rolling percentile requires 126 days. Hamilton filter requires 252 days. Full signal availability for FRED-based signals starts ~2005.
+
+### Theoretical Frameworks
+
+**Hamilton's regime-switching** (Hamilton, 1989) treats regimes as latent discrete states inferred from data via a hidden Markov model. Statistically rigorous but backward-looking — it tells you which regime you're probably in, not when the next transition will occur.
+
+**Sornette's LPPL framework** treats regime endings as deterministic critical points driven by endogenous positive feedback. Forward-looking but sensitive to fitting assumptions. Already implemented in fatcrash's bubble detection methods.
+
+**Critical slowing down** (Scheffer et al., 2009): near tipping points, systems recover more slowly. Observable signatures: rising variance + rising autocorrelation. The empirical complement to Sornette's theoretical prediction.
+
+**Hawkes processes** (Bacry, Muzy): extreme events cluster via self-excitation. Branching ratio approaching 1 signals criticality. Middle ground between LPPL (mechanistic) and Hamilton (statistical).
+
+**Rough volatility** (Gatheral & Rosenbaum, 2018): realized vol has Hurst exponent H ≈ 0.1 — rougher than a random walk. Standard GARCH underestimates short-term vol clustering.
+
+**Intermediary asset pricing** (Adrian, Shin; He, Krishnamurthy): intermediary balance-sheet constraints drive risk premia and liquidity simultaneously. Explains why credit spreads, VRP, and funding stress co-move at regime transitions.
+
+**Minsky's Financial Instability Hypothesis:** stability is destabilizing — calm encourages leverage migration from hedge to speculative to Ponzi finance. Low VRP + compressed credit spreads + rising leverage = Minsky warning even when no individual signal crosses a threshold.
+
+**Financial network contagion** (Acemoglu, Ozdaglar; Elliott, Golub, Jackson): dense interconnection is "robust yet fragile." DebtRank (Battiston et al., 2012) quantifies systemic importance through the balance-sheet network.
+
 ## Beyond Valuations: Revenue & Profit
 
 These methods were built for market prices, but most transfer to fundamental data like revenue or profit growth. The key distinction: **market prices** reflect collective speculative behavior (reflexivity, herding, positive feedback loops), while **revenue/profit** reflects real economic activity (customer demand, operational execution, competitive dynamics).
@@ -487,17 +601,21 @@ Rust (PyO3, _core.so)                Python
 │       Spectral, Momentum,  │       │   lppls_indicator.py             │
 │       Velocity             │       │   bubble_indicator.py            │
 │                            │       │   evt_indicator.py               │
-│ EVT:  GPD, GEV             │       │                                  │
-│                            │       │ nn/                              │
-│ LPPLS: fit, confidence,    │──────▶│   mlnn.py      (M-LNN)          │
-│        solve_linear        │       │   plnn.py      (P-LNN)          │
-│                            │       │   lppls_torch.py (shared)       │
-│ Bubble: GSADF              │       │   synthetic.py  (data gen)      │
+│ EVT:  GPD, GEV             │       │   regime_indicator.py (NEW)      │
 │                            │       │                                  │
+│ LPPLS: fit, confidence,    │──────▶│ nn/                              │
+│        solve_linear        │       │   mlnn.py      (M-LNN)          │
+│                            │       │   plnn.py      (P-LNN)          │
+│ Bubble: GSADF              │       │   lppls_torch.py (shared)       │
+│                            │       │   synthetic.py  (data gen)      │
 │ Multiscale                 │       │                                  │
-│                            │       │                                  │
-│ rayon: parallel CMA-ES,    │       │ aggregator/signals.py            │
-│        GSADF, confidence   │       │ cli/ viz/ service/ data/         │
+│                            │       │ aggregator/signals.py            │
+│ Regime (stubs):            │       │   + regime signal categories     │
+│   Hamilton, Hawkes, CSD,   │       │                                  │
+│   RealizedVar, Jump        │       │ data/ingest.py                   │
+│                            │       │   + from_fred_macro()            │
+│ rayon: parallel CMA-ES,    │       │   + from_ofr_fsi()              │
+│        GSADF, confidence   │       │ cli/ viz/ service/               │
 └────────────────────────────┘       └──────────────────────────────────┘
 ```
 
@@ -612,3 +730,60 @@ pip install fatcrash[deep]   # Adds PyTorch dependency
 - Mandelbrot, B.B. (1963). "The Variation of Certain Speculative Prices." *J. Business*, 36(4), 394-419.
 - Gabaix, X. (2009). "Power Laws in Economics and Finance." *Ann. Rev. Econ.*, 1, 255-294.
 - Mandelbrot, B.B. & Taleb, N.N. (2010). "Random Jump, Not Random Walk." In *The Known, the Unknown, and the Unknowable in Financial Risk Management.* Princeton University Press.
+
+### Variance Risk Premium & Tail-Risk Premia
+
+- Bollerslev, T., Tauchen, G. & Zhou, H. (2009). "Expected Stock Returns and Variance Risk Premia." *Review of Financial Studies*, 22(11), 4463-4492.
+- Bollerslev, T., Marrone, J., Xu, L. & Zhou, H. (2014). "Stock Return Predictability and Variance Risk Premia: International Evidence." *J. Financial and Quantitative Analysis*, 49(3), 511-540.
+- Bekaert, G. & Hoerova, M. (2014). "The VIX, the Variance Premium and Stock Market Volatility." *J. Econometrics*, 183(2), 181-190. NBER WP 18995.
+- Bollerslev, T. & Todorov, V. (2011). "Tails, Fears, and Risk Premia." *J. Finance*, 66(6), 2165-2211.
+- Barndorff-Nielsen, O.E. & Shephard, N. (2004). "Power and Bipower Variation with Stochastic Volatility and Jumps." *J. Financial Econometrics*, 2(1), 1-37.
+
+### Liquidity & Funding Stress
+
+- Pastor, L. & Stambaugh, R. (2003). "Liquidity Risk and Expected Stock Returns." *J. Political Economy*, 111(3), 642-685. NBER WP 8462.
+- Flood, M., Liechty, J. & Piontek, K. (2015). "Systemwide Commonalities in Market Liquidity." OFR Working Paper.
+- Brunnermeier, M. & Pedersen, L.H. (2009). "Market Liquidity and Funding Liquidity." *Review of Financial Studies*, 22(6), 2201-2238.
+
+### Credit Spreads & Macro
+
+- Gilchrist, S. & Zakrajsek, E. (2012). "Credit Spreads and Business Cycle Fluctuations." *American Economic Review*, 102(4), 1692-1720. NBER WP 17021.
+- Cochrane, J. & Piazzesi, M. (2005). "Bond Risk Premia." NBER WP 9178.
+- Adrian, T., Crump, R. & Moench, E. (2013). "Pricing the Term Structure with Linear Regressions." NY Fed Staff Report 340.
+
+### Regime-Switching & Structural Breaks
+
+- Hamilton, J. (1989). "A New Approach to the Economic Analysis of Nonstationary Time Series and the Business Cycle." *Econometrica*, 57(2), 357-384.
+- Ang, A. & Bekaert, G. (2002). "International Asset Allocation with Regime Shifts." *Review of Financial Studies*, 15(4), 1137-1187.
+- Ang, A. & Timmermann, A. (2012). "Regime Changes and Financial Markets." *Annual Review of Financial Economics*, 4, 313-337.
+
+### Critical Transitions & Tipping Points
+
+- Scheffer, M. et al. (2009). "Early-Warning Signals for Critical Transitions." *Nature*, 461, 53-59.
+- Scheffer, M. et al. (2001). "Catastrophic Shifts in Ecosystems." *Nature*, 413, 591-596.
+
+### Hawkes Processes
+
+- Bacry, E., Mastromatteo, I. & Muzy, J.-F. (2015). "Hawkes Processes in Finance." *Market Microstructure and Liquidity*, 1(1).
+- Filimonov, V. & Sornette, D. (2012). "Quantifying Reflexivity in Financial Markets." *Physical Review E*, 85, 056108.
+
+### Rough Volatility
+
+- Gatheral, J., Jaisson, T. & Rosenbaum, M. (2018). "Volatility is Rough." *Quantitative Finance*, 18(6), 933-949.
+
+### Intermediary Asset Pricing
+
+- He, Z. & Krishnamurthy, A. (2013). "Intermediary Asset Pricing." *American Economic Review*, 103(2), 732-770.
+- Adrian, T. & Shin, H.S. (2014). "Procyclical Leverage and Endogenous Risk." *J. Political Economy*, 122(1).
+
+### Systemic Risk
+
+- Adrian, T. & Brunnermeier, M. (2016). "CoVaR." *American Economic Review*, 106(7), 1705-1741.
+- Brownlees, C. & Engle, R. (2017). "SRISK: A Conditional Capital Shortfall Measure of Systemic Risk." *Review of Financial Studies*, 30(1), 48-79.
+- Acemoglu, D., Ozdaglar, A. & Tahbaz-Salehi, A. (2015). "Systemic Risk and Stability in Financial Networks." *American Economic Review*, 105(2), 564-608.
+- Battiston, S. et al. (2012). "DebtRank: Too Central to Fail?" *Scientific Reports*, 2, 541.
+
+### Financial Networks & Contagion
+
+- Elliott, M., Golub, B. & Jackson, M.O. (2014). "Financial Networks and Contagion." *American Economic Review*, 104(10), 3115-3153.
+- Forbes, K. & Rigobon, R. (2002). "No Contagion, Only Interdependence." *J. Finance*, 57(5), 2223-2261.

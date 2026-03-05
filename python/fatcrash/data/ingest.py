@@ -204,6 +204,77 @@ def from_fred(
     return result
 
 
+def from_fred_macro(
+    start: str = "2005-01-01",
+    end: str | None = None,
+    use_cache: bool = True,
+) -> pd.DataFrame:
+    """Fetch key macro series for regime signal computation from FRED.
+
+    Returns a DataFrame with columns for each series, daily frequency,
+    forward-filled for missing days.
+
+    Series fetched:
+        VIXCLS       - VIX (CBOE Volatility Index)
+        BAMLH0A0HYM2 - ICE BofA US High Yield OAS
+        BAMLC0A4CBBB - ICE BofA BBB OAS
+        T10Y3M       - 10Y-3M yield curve spread
+        T10Y2Y       - 10Y-2Y yield curve spread
+        TEDRATE      - TED spread (discontinued April 2022)
+        BAA10Y       - Baa-Aaa credit spread
+        STLFSI4      - St. Louis Fed Financial Stress Index
+    """
+    series = [
+        "VIXCLS",
+        "BAMLH0A0HYM2",
+        "BAMLC0A4CBBB",
+        "T10Y3M",
+        "T10Y2Y",
+        "TEDRATE",
+        "BAA10Y",
+        "STLFSI4",
+    ]
+    return from_fred(series, start=start, end=end, use_cache=use_cache)
+
+
+def from_ofr_fsi(
+    use_cache: bool = True,
+) -> pd.DataFrame:
+    """Fetch OFR Financial Stress Index.
+
+    Daily series from the Office of Financial Research.
+    CSV download: https://www.financialresearch.gov/financial-stress-index/
+
+    Returns DataFrame with DatetimeIndex and 'ofr_fsi' column.
+    """
+    import httpx
+
+    scope = "ofr_fsi_latest"
+    if use_cache:
+        cached = cache.load_cached("ofr", "fsi", scope)
+        if cached is not None:
+            return cached
+
+    url = "https://www.financialresearch.gov/financial-stress-index/files/fsi_data.csv"
+    resp = httpx.get(url, headers={"User-Agent": "fatcrash/0.1"}, timeout=30)
+    resp.raise_for_status()
+
+    from io import StringIO
+
+    df = pd.read_csv(StringIO(resp.text))
+    # OFR CSV typically has Date and OFR FSI columns
+    date_col = [c for c in df.columns if "date" in c.lower()][0]
+    val_col = [c for c in df.columns if c != date_col][0]
+    df[date_col] = pd.to_datetime(df[date_col])
+    df[val_col] = pd.to_numeric(df[val_col], errors="coerce")
+    df = df.rename(columns={date_col: "date", val_col: "ofr_fsi"})
+    df = df.set_index("date").sort_index()
+
+    if use_cache:
+        cache.save_cache(df, "ofr", "fsi", scope)
+    return df
+
+
 _FOREX_CENTURIES_DIR = Path.home() / "projects" / "forex-centuries"
 _FRED_DAILY_DIR = _FOREX_CENTURIES_DIR / "data" / "sources" / "fred" / "daily"
 _FRED_SKIP = {"fred_usd_broad_index.csv", "fred_usd_major_index.csv"}

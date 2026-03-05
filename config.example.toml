@@ -1,0 +1,59 @@
+title = "fatcrash"
+
+# ── Crash detection settings ──────────────────────────────
+# (Existing crash detection methods use hardcoded defaults;
+#  this config is for the regime signal pipeline.)
+
+# ── Regime signal settings ────────────────────────────────
+
+[regime.windows]
+# Rolling windows for normalization
+z_daily_days = 756       # ~3 years for daily z-scores
+z_weekly_days = 1260     # ~5 years for weekly z-scores
+pct_daily_days = 756     # ~3 years for daily percentile ranks
+pct_weekly_days = 1260   # ~5 years for weekly percentile ranks
+
+[regime.thresholds]
+risk_on = 0.50           # Score >= this → risk_on
+risk_off = -0.50         # Score <= this → risk_off
+confidence_divisor = 2.0 # confidence = min(1, |score| / divisor)
+ema_alpha = 0.2          # EMA smoothing factor (~4-day half-life)
+
+[regime.weights]
+# Bucket weights (negative = more stress → risk_off)
+risk_premium = -0.30
+liquidity = -0.25
+volatility = -0.20
+credit_macro = -0.15
+structure_flows = -0.10
+contagion = 0.0          # Placeholder until implemented
+sentiment = 0.0          # Placeholder until implemented
+
+[regime.series]
+# Macro stress
+ofr_fsi = "OFR_FSI"
+stl_fsi = "FRED:STLFSI4"
+
+# Volatility regime
+vix_f1 = "CBOE:VX1"
+vix_f3 = "CBOE:VX3"
+skew = "CBOE:SKEW"
+move = "ICE:MOVE"
+vvix = "CBOE:VVIX"
+
+# Liquidity & funding
+sofr_ois = "FRED:SOFROIS"
+fra_ois = "FRED:FRAOIS"
+ted = "FRED:TEDRATE"
+
+# Credit & macro
+baa_aaa = "FRED:BAA10Y"
+hy_oas = "FRED:BAMLH0A0HYM2"
+bbb_oas = "FRED:BAMLC0A4CBBB"
+curve_2s10s = "FRED:T10Y2Y"
+curve_3m10y = "FRED:T10Y3M"
+term_premium = "NYFED:ACMTP"
+
+# Positioning/flows (placeholders)
+cot = "CFTC:COT_NET_SPEC"
+etf_flows = "ETF:NET_FLOWS"

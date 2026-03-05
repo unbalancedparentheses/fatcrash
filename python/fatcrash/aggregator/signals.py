@@ -32,6 +32,17 @@ class CrashSignal:
             return "LOW"
 
 
+@dataclass
+class RegimeSignal:
+    """Market regime classification from macro/microstructure signals."""
+
+    label: str  # "risk_on", "neutral", "risk_off"
+    score: float  # Smoothed regime score
+    confidence: float  # [0, 1]
+    buckets: dict[str, float | None] = field(default_factory=dict)
+    components: dict[str, float] = field(default_factory=dict)
+
+
 # Updated weights including NN methods
 DEFAULT_WEIGHTS = {
     # Bubble detectors (highest weight — best accuracy)
@@ -58,6 +69,29 @@ DEFAULT_WEIGHTS = {
     "velocity_spike": 0.04,
     # Other
     "multiscale": 0.06,
+    # Market regime signals (placeholder weights — set to 0.0 until implemented)
+    "vrp_signal": 0.0,
+    "jump_risk_signal": 0.0,
+    "sofr_ois_z": 0.0,
+    "ted_z": 0.0,
+    "amihud_pct": 0.0,
+    "xccy_basis_z": 0.0,
+    "vix_slope_z": 0.0,
+    "skew_z": 0.0,
+    "move_z": 0.0,
+    "vvix_z": 0.0,
+    "ofr_fsi_z": 0.0,
+    "credit_spread_z": 0.0,
+    "ebp_z": 0.0,
+    "yield_curve_z": 0.0,
+    "eigenvalue_z": 0.0,
+    "cot_z": 0.0,
+    "etf_flows_z": 0.0,
+    "covar_z": 0.0,
+    "mes_z": 0.0,
+    "srisk_z": 0.0,
+    "fomc_tone_z": 0.0,
+    "news_uncertainty_z": 0.0,
 }
 
 
@@ -99,6 +133,14 @@ def aggregate_signals(
         "regime": ["hurst_trending", "dfa_trending", "spectral_memory",
                    "momentum_reversal"],
         "structure": ["multiscale", "lppls_tc_proximity", "velocity_spike"],
+        # Market regime signal families (macro/microstructure)
+        "risk_premium": ["vrp_signal", "jump_risk_signal"],
+        "liquidity": ["sofr_ois_z", "ted_z", "amihud_pct", "xccy_basis_z"],
+        "vol_regime": ["vix_slope_z", "skew_z", "move_z", "vvix_z"],
+        "credit_macro": ["ofr_fsi_z", "credit_spread_z", "ebp_z", "yield_curve_z"],
+        "structure_flows": ["eigenvalue_z", "cot_z", "etf_flows_z"],
+        "contagion": ["covar_z", "mes_z", "srisk_z"],
+        "sentiment": ["fomc_tone_z", "news_uncertainty_z"],
     }
 
     n_agreeing = 0
@@ -323,3 +365,74 @@ def velocity_signal(velocity: float) -> float:
         return 0.0
     # Scale: 0.5 = vol increased 50% (notable), 2.0 = doubled (full signal)
     return np.clip(velocity / 2.0, 0.0, 1.0)
+
+
+# ── Market regime signal converters ───────────────────────
+
+def zscore_stress_signal(z: float) -> float:
+    """Convert z-score to [0,1] stress signal. Higher z = more stress = higher signal.
+
+    Used for funding spreads, credit spreads, vol indices, and stress indices.
+    Maps z in [0, 4] to [0, 1]; below 0 returns 0.
+    """
+    if np.isnan(z):
+        return 0.0
+    return np.clip(z / 4.0, 0.0, 1.0)
+
+
+def percentile_stress_signal(pct: float) -> float:
+    """Convert percentile rank [0,1] to stress signal [0,1].
+
+    Used for Amihud illiquidity and similar rank-based signals.
+    """
+    if np.isnan(pct):
+        return 0.0
+    return np.clip(pct, 0.0, 1.0)
+
+
+def vrp_signal(implied_var: float, realized_var: float) -> float:
+    """Signal from variance risk premium. High VRP = fear; negative VRP = acute stress.
+
+    VRP = implied_var - realized_var. Both should be annualized.
+    Returns high signal for both high positive VRP (fear) and negative VRP (acute crisis).
+    """
+    if np.isnan(implied_var) or np.isnan(realized_var):
+        return 0.0
+    vrp = implied_var - realized_var
+    if vrp < 0:
+        # Negative VRP: realized exceeds implied → acute stress
+        return np.clip(-vrp / 0.05, 0.0, 1.0)
+    # High positive VRP: fear premium
+    return np.clip(vrp / 0.10, 0.0, 1.0)
+
+
+def vix_slope_signal(slope: float) -> float:
+    """Signal from VIX term structure slope. Negative slope (backwardation) = stress.
+
+    slope = front_month - back_month (negative = backwardation = stress).
+    """
+    if np.isnan(slope):
+        return 0.0
+    if slope >= 0:
+        return 0.0
+    # Deeper backwardation = stronger signal
+    return np.clip(-slope / 10.0, 0.0, 1.0)
+
+
+def credit_spread_signal(spread_z: float) -> float:
+    """Signal from credit spread z-score. Widening spreads = stress."""
+    if np.isnan(spread_z):
+        return 0.0
+    return np.clip(spread_z / 3.0, 0.0, 1.0)
+
+
+def eigenvalue_signal(lambda_frac: float) -> float:
+    """Signal from largest eigenvalue fraction of cross-asset correlation matrix.
+
+    lambda_frac approaching 1.0 = all assets moving together = crisis regime.
+    For n=4 assets, random baseline is ~0.25; stress is ~0.6+.
+    """
+    if np.isnan(lambda_frac):
+        return 0.0
+    # Scale from 0.3 (normal) to 0.8 (crisis)
+    return np.clip((lambda_frac - 0.3) / 0.5, 0.0, 1.0)

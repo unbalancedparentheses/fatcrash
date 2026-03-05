@@ -4,6 +4,7 @@ mod bubble;
 mod evt;
 mod lppls;
 mod multiscale;
+mod regime;
 mod tail;
 mod utils;
 

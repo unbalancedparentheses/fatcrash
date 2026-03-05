@@ -4,7 +4,7 @@
 
 The median tail index across 138 countries is alpha = 1.57. Standard risk models assume finite variance (alpha > 2) and often finite kurtosis (alpha > 4). For the majority of the world's currencies, these assumptions are empirically false. fatcrash detects crashes by measuring what actually matters: the tail.
 
-Python + Rust (PyO3). 17 crash detection methods + 7 market regime signal families. 500 years of data.
+Python + Rust (PyO3). 17 crash detection methods + 4 regime detection algorithms + 7 market regime signal families. 500 years of data.
 
 ```python
 from fatcrash.data.ingest import from_sample
@@ -354,7 +354,16 @@ Method agreement: Pickands xi > 0, DEH gamma > 0, Hill alpha < 4, and QQ alpha <
 | 16 | P-LNN | Bubble (NN) | Pre-trained LPPLS (~700x faster) | tc, m, omega, confidence |
 | 17 | Price velocity | Structure | Volatility acceleration (cascade detection) | velocity signal |
 
-**Market regime signal families** (macro/microstructure, not yet implemented — see [Market Regime Signals](#market-regime-signals)):
+**Regime detection algorithms** (implemented in Rust):
+
+| # | Algorithm | What it computes |
+|---|-----------|-----------------|
+| R-A1 | Realized Variance | Simple, Parkinson, Garman-Klass annualized variance estimators |
+| R-A2 | Jump Risk (BNS) | Bipower variation, jump variance, BNS z-test |
+| R-A3 | Critical Slowing Down | Rolling AR(1) + rolling variance rate of change |
+| R-A4 | Hamilton Filter | 2-state HMM with EM estimation, forward filter, Kim smoother |
+
+**Market regime signal families** (macro/microstructure — see [Market Regime Signals](#market-regime-signals)):
 
 | # | Family | Signals | What it detects |
 |---|--------|---------|-----------------|
@@ -477,9 +486,9 @@ The goal is transparent, inspectable signals grounded in the academic literature
 
 **Hamilton Filter (2-state HMM).** States: normal (s=0) and stressed (s=1). Each state has its own mean and variance. Forward filter: predict → compute densities → update via Bayes' rule. Parameter estimation via EM (Baum-Welch). Use log-space for numerical stability. Multiple random restarts to avoid local optima.
 
-**Hawkes Process Branching Ratio.** Intensity: `lambda(t) = mu + alpha * sum(exp(-beta*(t-t_i)))`. Branching ratio `n = alpha/beta`. n < 1 = stable; n → 1 = critical (self-excitation dominates). MLE with analytic gradient, optimize via L-BFGS-B. Event definition: VIX threshold crossings or large order flow imbalances.
-
 **Critical Slowing Down.** Near a tipping point, systems recover more slowly from perturbations. Observable: rising AR(1) coefficient AND rising variance simultaneously over rolling windows. Apply to credit spreads, VIX, and the cross-asset correlation eigenvalue.
+
+**Hawkes Process Branching Ratio** (future work). Intensity: `lambda(t) = mu + alpha * sum(exp(-beta*(t-t_i)))`. Branching ratio `n = alpha/beta`. Not yet implemented — the self-excitation signal is largely captured by CSD + velocity. Would require an L-BFGS-B optimizer and event-timestamp input rather than price series.
 
 ### Regime Scoring
 
@@ -537,7 +546,7 @@ Negative weights: higher stress → more risk-off. Smooth with EMA (alpha=0.2) t
 
 **Critical slowing down** (Scheffer et al., 2009): near tipping points, systems recover more slowly. Observable signatures: rising variance + rising autocorrelation. The empirical complement to Sornette's theoretical prediction.
 
-**Hawkes processes** (Bacry, Muzy): extreme events cluster via self-excitation. Branching ratio approaching 1 signals criticality. Middle ground between LPPL (mechanistic) and Hamilton (statistical).
+**Hawkes processes** (Bacry, Muzy): extreme events cluster via self-excitation. Branching ratio approaching 1 signals criticality. Middle ground between LPPL (mechanistic) and Hamilton (statistical). Not yet implemented — signal largely captured by CSD + velocity.
 
 **Rough volatility** (Gatheral & Rosenbaum, 2018): realized vol has Hurst exponent H ≈ 0.1 — rougher than a random walk. Standard GARCH underestimates short-term vol clustering.
 
@@ -610,16 +619,16 @@ Rust (PyO3, _core.so)                Python
 │                            │       │   synthetic.py  (data gen)      │
 │ Multiscale                 │       │                                  │
 │                            │       │ aggregator/signals.py            │
-│ Regime (stubs):            │       │   + regime signal categories     │
-│   Hamilton, Hawkes, CSD,   │       │                                  │
-│   RealizedVar, Jump        │       │ data/ingest.py                   │
+│ Regime:                    │       │   + regime signal categories     │
+│   RealizedVar, Jump, CSD,  │       │                                  │
+│   Hamilton                 │       │ data/ingest.py                   │
 │                            │       │   + from_fred_macro()            │
 │ rayon: parallel CMA-ES,    │       │   + from_ofr_fsi()              │
 │        GSADF, confidence   │       │ cli/ viz/ service/               │
 └────────────────────────────┘       └──────────────────────────────────┘
 ```
 
-All 15 classical estimators are implemented in Rust and exposed to Python via PyO3. The computationally intensive methods (LPPLS CMA-ES, GSADF, confidence) use rayon for parallelization. The 2 neural network methods are in Python (PyTorch) and call `lppls_solve_linear` from Rust for the analytical linear parameter solve.
+All 15 classical estimators and 4 regime detection algorithms are implemented in Rust and exposed to Python via PyO3. The computationally intensive methods (LPPLS CMA-ES, GSADF, confidence, Hamilton EM) use rayon for parallelization. The 2 neural network methods are in Python (PyTorch) and call `lppls_solve_linear` from Rust for the analytical linear parameter solve.
 
 | Component | Language | Why |
 |-----------|----------|-----|

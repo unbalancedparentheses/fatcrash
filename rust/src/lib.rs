@@ -64,6 +64,48 @@ fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(bubble::gsadf::gsadf_test, m)?)?;
     m.add_function(wrap_pyfunction!(bubble::gsadf::gsadf_rolling, m)?)?;
 
+    // Regime detection — realized variance
+    m.add_function(wrap_pyfunction!(regime::realized_var::realized_variance, m)?)?;
+    m.add_function(wrap_pyfunction!(
+        regime::realized_var::realized_variance_parkinson,
+        m
+    )?)?;
+    m.add_function(wrap_pyfunction!(
+        regime::realized_var::realized_variance_gk,
+        m
+    )?)?;
+    m.add_function(wrap_pyfunction!(
+        regime::realized_var::realized_variance_rolling,
+        m
+    )?)?;
+    m.add_function(wrap_pyfunction!(
+        regime::realized_var::realized_variance_parkinson_rolling,
+        m
+    )?)?;
+
+    // Regime detection — jump risk
+    m.add_function(wrap_pyfunction!(regime::jump::bipower_variation, m)?)?;
+    m.add_function(wrap_pyfunction!(regime::jump::jump_variance, m)?)?;
+    m.add_function(wrap_pyfunction!(regime::jump::jump_test, m)?)?;
+    m.add_function(wrap_pyfunction!(
+        regime::jump::bipower_variation_rolling,
+        m
+    )?)?;
+    m.add_function(wrap_pyfunction!(
+        regime::jump::jump_variance_rolling,
+        m
+    )?)?;
+
+    // Regime detection — critical slowing down
+    m.add_function(wrap_pyfunction!(regime::csd::rolling_ar1, m)?)?;
+    m.add_function(wrap_pyfunction!(regime::csd::rolling_variance, m)?)?;
+    m.add_function(wrap_pyfunction!(regime::csd::csd_indicator, m)?)?;
+
+    // Regime detection — Hamilton filter
+    m.add_function(wrap_pyfunction!(regime::hamilton::hamilton_filter, m)?)?;
+    m.add_function(wrap_pyfunction!(regime::hamilton::hamilton_fit, m)?)?;
+    m.add_function(wrap_pyfunction!(regime::hamilton::hamilton_smooth, m)?)?;
+
     // Utils
     m.add_function(wrap_pyfunction!(utils::log_returns, m)?)?;
     m.add_function(wrap_pyfunction!(utils::log_prices, m)?)?;

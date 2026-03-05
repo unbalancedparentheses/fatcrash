@@ -28,7 +28,9 @@ from fatcrash._core import (
     pickands_estimator, hurst_exponent, gsadf_test, taleb_kappa,
     dfa_exponent, deh_estimator, qq_estimator, maxsum_ratio, spectral_exponent,
     lppls_confidence,
+    realized_variance, bipower_variation, jump_variance,
 )
+from fatcrash.indicators.regime_indicator import estimate_hamilton, estimate_csd
 from fatcrash.aggregator import signals as sig
 from fatcrash.aggregator.signals import aggregate_signals
 
@@ -327,6 +329,45 @@ def test_method_on_drawdown(df, peak_idx, window=120,
     else:
         results["spectral"] = None
 
+    # Jump risk
+    try:
+        pre_rv = realized_variance(pre_ret, window=min(len(pre_ret), 21))
+        pre_jv = jump_variance(pre_ret, window=min(len(pre_ret), 21))
+        base_rv = realized_variance(base_ret, window=min(len(base_ret), 21))
+        base_jv = jump_variance(base_ret, window=min(len(base_ret), 21))
+        if not (np.isnan(pre_jv) or np.isnan(base_jv)):
+            results["jump_risk"] = pre_jv > base_jv
+            components["jump_risk_signal"] = sig.jump_risk_signal_converter(pre_jv, pre_rv)
+        else:
+            results["jump_risk"] = None
+    except Exception:
+        results["jump_risk"] = None
+
+    # Hamilton filter
+    try:
+        if len(pre_ret) >= 60:
+            hmm = estimate_hamilton(pre_ret, n_restarts=3)
+            if np.isfinite(hmm.prob_stressed):
+                results["hamilton"] = hmm.prob_stressed > 0.5
+                components["hamilton_stress"] = sig.hamilton_stress_signal(hmm.prob_stressed)
+            else:
+                results["hamilton"] = None
+        else:
+            results["hamilton"] = None
+    except Exception:
+        results["hamilton"] = None
+
+    # CSD
+    try:
+        if len(pre_ret) > 350:
+            csd = estimate_csd(pre_ret)
+            results["csd"] = csd.warning
+            components["csd_warning"] = 1.0 if csd.warning else (0.3 if (csd.ar1_rising or csd.var_rising) else 0.0)
+        else:
+            results["csd"] = None
+    except Exception:
+        results["csd"] = None
+
     # ── NN methods ─────────────────────────────────
     if run_nn and _TORCH_AVAILABLE:
         pre_lp = log_prices(df.iloc[pre_start:pre_end])
@@ -523,6 +564,7 @@ def main():
         "lppls", "lppls_confidence", "gsadf", "hurst", "dfa",
         "kappa", "taleb_kappa", "pickands", "deh", "qq",
         "gpd_var", "maxsum", "spectral", "hill",
+        "jump_risk", "hamilton", "csd",
     ]
     nn_methods = ["mlnn", "plnn"] if run_nn else []
     all_methods = classical_methods + nn_methods

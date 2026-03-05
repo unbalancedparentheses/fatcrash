@@ -142,6 +142,44 @@ def detect(
     except Exception as e:
         table.add_row("EVT", "error", str(e), "[red]ERR[/]")
 
+    # Regime detection
+    try:
+        from fatcrash.indicators.regime_indicator import (
+            estimate_jump_risk, estimate_csd, estimate_hamilton,
+        )
+
+        jump = estimate_jump_risk(returns)
+        table.add_row(
+            "Jump fraction",
+            f"{jump.jump_fraction:.3f}",
+            f"JV={jump.jv:.4f}",
+            "[red]!!![/]" if jump.jump_fraction > 0.3 else "[green]OK[/]",
+        )
+
+        if len(returns) > 350:
+            csd = estimate_csd(returns)
+            csd_status = "[red]!!![/]" if csd.warning else "[green]OK[/]"
+            table.add_row(
+                "CSD warning",
+                "Yes" if csd.warning else "No",
+                f"AR1↑={csd.ar1_rising} Var↑={csd.var_rising}",
+                csd_status,
+            )
+
+        if len(returns) > 100:
+            hmm = estimate_hamilton(returns, n_restarts=5)
+            hmm_status = "[red]!!![/]" if hmm.prob_stressed > 0.7 else (
+                "[yellow]![/]" if hmm.prob_stressed > 0.5 else "[green]OK[/]"
+            )
+            table.add_row(
+                "Hamilton P(stressed)",
+                f"{hmm.prob_stressed:.2f}",
+                f"σ_N={hmm.sigma_normal:.4f} σ_S={hmm.sigma_stressed:.4f}",
+                hmm_status,
+            )
+    except Exception as e:
+        table.add_row("Regime", "error", str(e), "[red]ERR[/]")
+
     # LPPLS
     try:
         from fatcrash.indicators.lppls_indicator import fit_lppls
@@ -170,9 +208,12 @@ def backtest(
     from fatcrash.data import transforms
     from fatcrash.indicators.tail_indicator import rolling_tail_index, rolling_kappa, rolling_taleb_kappa
     from fatcrash.indicators.evt_indicator import rolling_var_es
+    from fatcrash.indicators.regime_indicator import rolling_jv, rolling_rv, estimate_hamilton
     from fatcrash.aggregator.signals import (
         aggregate_signals,
         hill_thinning_signal,
+        jump_risk_signal_converter,
+        hamilton_stress_signal,
         kappa_regime_signal,
         taleb_kappa_signal,
         var_exceedance_signal,
@@ -204,6 +245,14 @@ def backtest(
     console.print("Computing rolling VaR/ES...")
     var_arr, es_arr = rolling_var_es(returns, window=window)
 
+    console.print("Computing rolling jump variance...")
+    jv_arr = rolling_jv(returns, window=min(window, 63))
+    rv_arr = rolling_rv(returns, window=min(window, 63))
+
+    console.print("Fitting Hamilton filter...")
+    hmm = estimate_hamilton(returns, n_restarts=5)
+    hmm_probs = hmm.filtered_probs
+
     # Build aggregate signals
     console.print("Aggregating signals...\n")
     n = len(returns)
@@ -223,6 +272,12 @@ def backtest(
 
         if not np.isnan(var_arr[i]):
             components["gpd_var_exceedance"] = var_exceedance_signal(returns[i], var_arr[i])
+
+        if not np.isnan(jv_arr[i]) and not np.isnan(rv_arr[i]):
+            components["jump_risk_signal"] = jump_risk_signal_converter(jv_arr[i], rv_arr[i])
+
+        if i < len(hmm_probs) and not np.isnan(hmm_probs[i]):
+            components["hamilton_stress"] = hamilton_stress_signal(hmm_probs[i])
 
         if components:
             signal = aggregate_signals(components)

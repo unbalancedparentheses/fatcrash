@@ -69,9 +69,12 @@ DEFAULT_WEIGHTS = {
     "velocity_spike": 0.04,
     # Other
     "multiscale": 0.06,
-    # Market regime signals (placeholder weights — set to 0.0 until implemented)
+    # Regime detection algorithms (implemented in Rust)
+    "jump_risk_signal": 0.03,
+    "csd_warning": 0.03,
+    "hamilton_stress": 0.03,
+    # Market regime signals (placeholder weights — require external data sources)
     "vrp_signal": 0.0,
-    "jump_risk_signal": 0.0,
     "sofr_ois_z": 0.0,
     "ted_z": 0.0,
     "amihud_pct": 0.0,
@@ -131,7 +134,7 @@ def aggregate_signals(
         "tail": ["kappa_regime", "taleb_kappa", "hill_thinning", "pickands_thinning",
                  "gpd_var_exceedance", "deh_thinning", "qq_thinning", "maxsum_signal"],
         "regime": ["hurst_trending", "dfa_trending", "spectral_memory",
-                   "momentum_reversal"],
+                   "momentum_reversal", "csd_warning", "hamilton_stress"],
         "structure": ["multiscale", "lppls_tc_proximity", "velocity_spike"],
         # Market regime signal families (macro/microstructure)
         "risk_premium": ["vrp_signal", "jump_risk_signal"],
@@ -424,6 +427,45 @@ def credit_spread_signal(spread_z: float) -> float:
     if np.isnan(spread_z):
         return 0.0
     return np.clip(spread_z / 3.0, 0.0, 1.0)
+
+
+def jump_risk_signal_converter(jv: float, rv: float) -> float:
+    """Signal from jump variance fraction. High JV/RV = jump-driven stress.
+
+    Spikes during Flash Crash, Lehman, COVID when discontinuous moves dominate.
+    """
+    if np.isnan(jv) or np.isnan(rv) or rv <= 0:
+        return 0.0
+    fraction = jv / rv
+    # Scale: 0.1 = some jumps, 0.5 = jump-dominated → full signal
+    return np.clip(fraction / 0.5, 0.0, 1.0)
+
+
+def csd_warning_signal(ar1_roc: float, var_roc: float) -> float:
+    """Signal from Critical Slowing Down.
+
+    Dual increase (rising AR(1) + rising variance) = approaching tipping point.
+    Returns 1.0 if both positive, 0.5 if only one positive, 0.0 if neither.
+    """
+    if np.isnan(ar1_roc) or np.isnan(var_roc):
+        return 0.0
+    ar1_up = ar1_roc > 0
+    var_up = var_roc > 0
+    if ar1_up and var_up:
+        return 1.0
+    if ar1_up or var_up:
+        return 0.3
+    return 0.0
+
+
+def hamilton_stress_signal(prob_stressed: float) -> float:
+    """Signal from Hamilton filter P(stressed).
+
+    Direct probability output from 2-state HMM.
+    """
+    if np.isnan(prob_stressed):
+        return 0.0
+    return np.clip(prob_stressed, 0.0, 1.0)
 
 
 def eigenvalue_signal(lambda_frac: float) -> float:

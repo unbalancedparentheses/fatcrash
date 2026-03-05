@@ -77,6 +77,7 @@ fn fit_single_window(
 /// tc_std[t] = std of tc from passing fits (NaN if < 2 pass).
 #[pyfunction]
 #[pyo3(signature = (times, log_prices, min_window=60, max_window=750, n_windows=50, n_candidates=30))]
+#[allow(clippy::type_complexity)]
 pub fn lppls_confidence<'py>(
     py: Python<'py>,
     times: PyReadonlyArray1<'py, f64>,

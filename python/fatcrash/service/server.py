@@ -42,8 +42,11 @@ def create_app() -> FastAPI:
         from fatcrash.data import ingest, transforms
         from fatcrash.indicators.tail_indicator import estimate_tail_index, estimate_kappa, estimate_taleb_kappa
         from fatcrash.indicators.evt_indicator import compute_var_es
+        from fatcrash.indicators.regime_indicator import estimate_jump_risk, estimate_hamilton
         from fatcrash.aggregator.signals import (
             aggregate_signals,
+            jump_risk_signal_converter,
+            hamilton_stress_signal,
             kappa_regime_signal,
             taleb_kappa_signal,
             var_exceedance_signal,
@@ -87,6 +90,19 @@ def create_app() -> FastAPI:
             risk = compute_var_es(returns)
             latest_loss = -returns[-1]
             components["gpd_var_exceedance"] = var_exceedance_signal(returns[-1], risk.var)
+        except Exception:
+            pass
+
+        try:
+            jump = estimate_jump_risk(returns)
+            components["jump_risk_signal"] = jump_risk_signal_converter(jump.jv, jump.rv)
+        except Exception:
+            pass
+
+        try:
+            if len(returns) > 100:
+                hmm = estimate_hamilton(returns, n_restarts=3)
+                components["hamilton_stress"] = hamilton_stress_signal(hmm.prob_stressed)
         except Exception:
             pass
 

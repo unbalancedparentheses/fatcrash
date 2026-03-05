@@ -32,6 +32,23 @@ from fatcrash._core import (
     momentum_reversal_rolling,
     price_velocity,
     price_velocity_rolling,
+    # Regime detection
+    realized_variance,
+    realized_variance_parkinson,
+    realized_variance_gk,
+    realized_variance_rolling,
+    realized_variance_parkinson_rolling,
+    bipower_variation,
+    jump_variance,
+    jump_test,
+    bipower_variation_rolling,
+    jump_variance_rolling,
+    rolling_ar1,
+    rolling_variance,
+    csd_indicator,
+    hamilton_filter,
+    hamilton_fit,
+    hamilton_smooth,
 )
 
 
@@ -346,3 +363,142 @@ class TestVelocity:
         assert len(result) == len(returns)
         assert np.isnan(result[0])
         assert np.isfinite(result[-1])
+
+
+class TestRealizedVariance:
+    def test_basic(self):
+        rng = np.random.default_rng(42)
+        returns = 0.01 * rng.standard_normal(500)
+        rv = realized_variance(returns, window=21)
+        assert rv > 0 and np.isfinite(rv)
+
+    def test_parkinson(self):
+        high = np.full(100, 102.0)
+        low = np.full(100, 100.0)
+        rv = realized_variance_parkinson(high, low, window=21)
+        assert rv > 0 and np.isfinite(rv)
+
+    def test_gk(self):
+        o = np.full(100, 100.0)
+        h = np.full(100, 102.0)
+        l = np.full(100, 99.0)
+        c = np.full(100, 101.0)
+        rv = realized_variance_gk(o, h, l, c, window=21)
+        assert rv > 0 and np.isfinite(rv)
+
+    def test_rolling(self):
+        rng = np.random.default_rng(42)
+        returns = 0.01 * rng.standard_normal(500)
+        result = realized_variance_rolling(returns, window=21)
+        assert len(result) == 500
+        assert np.isnan(result[0])
+        assert np.isfinite(result[-1])
+        assert result[-1] > 0
+
+    def test_parkinson_rolling(self):
+        high = np.full(100, 102.0)
+        low = np.full(100, 100.0)
+        result = realized_variance_parkinson_rolling(high, low, window=21)
+        assert len(result) == 100
+        assert np.isnan(result[0])
+        assert np.isfinite(result[-1])
+
+
+class TestJumpRisk:
+    def test_bipower_variation(self):
+        rng = np.random.default_rng(42)
+        returns = 0.01 * rng.standard_normal(500)
+        bv = bipower_variation(returns, window=21)
+        assert bv > 0 and np.isfinite(bv)
+
+    def test_jump_variance_gaussian(self):
+        rng = np.random.default_rng(42)
+        returns = 0.01 * rng.standard_normal(500)
+        jv = jump_variance(returns, window=21)
+        rv = realized_variance(returns, window=21)
+        assert jv >= 0
+        # Gaussian: jump fraction should be small
+        assert jv < rv
+
+    def test_jump_test(self):
+        rng = np.random.default_rng(42)
+        returns = 0.01 * rng.standard_normal(500)
+        z, jv = jump_test(returns, window=63)
+        assert np.isfinite(z)
+        assert jv >= 0
+
+    def test_rolling(self):
+        rng = np.random.default_rng(42)
+        returns = 0.01 * rng.standard_normal(500)
+        bv_arr = bipower_variation_rolling(returns, window=21)
+        jv_arr = jump_variance_rolling(returns, window=21)
+        assert len(bv_arr) == 500
+        assert len(jv_arr) == 500
+        assert np.isnan(bv_arr[0])
+        assert np.isfinite(bv_arr[-1])
+
+
+class TestCSD:
+    def test_rolling_ar1(self):
+        rng = np.random.default_rng(42)
+        data = np.cumsum(0.01 * rng.standard_normal(600))
+        result = rolling_ar1(data, window=252)
+        assert len(result) == 600
+        assert np.isnan(result[0])
+        # Should have values after window
+        valid = result[~np.isnan(result)]
+        assert len(valid) > 0
+
+    def test_rolling_variance(self):
+        rng = np.random.default_rng(42)
+        data = rng.standard_normal(500)
+        result = rolling_variance(data, window=100)
+        assert len(result) == 500
+        assert np.isnan(result[0])
+        assert np.isfinite(result[-1])
+        assert result[-1] > 0
+
+    def test_csd_indicator(self):
+        rng = np.random.default_rng(42)
+        data = np.cumsum(0.01 * rng.standard_normal(600))
+        ar1_roc, var_roc, csd_sig = csd_indicator(data, window=252, roc_window=63)
+        assert len(ar1_roc) == 600
+        assert len(var_roc) == 600
+        assert len(csd_sig) == 600
+        # CSD signal should be 0 or 1
+        valid_csd = np.asarray(csd_sig)[~np.isnan(csd_sig)]
+        if len(valid_csd) > 0:
+            assert all(v in (0.0, 1.0) for v in valid_csd)
+
+
+class TestHamiltonFilter:
+    def test_hamilton_fit(self):
+        rng = np.random.default_rng(42)
+        returns = 0.01 * rng.standard_normal(500)
+        mu0, s0, mu1, s1, p00, p11, probs = hamilton_fit(returns, n_restarts=3)
+        assert np.isfinite(mu0) and np.isfinite(mu1)
+        assert s0 > 0 and s1 > 0
+        assert 0 < p00 < 1 and 0 < p11 < 1
+        assert len(probs) == 500
+        assert all(0 <= p <= 1 for p in probs if np.isfinite(p))
+
+    def test_hamilton_filter_known(self):
+        rng = np.random.default_rng(42)
+        returns = 0.01 * rng.standard_normal(200)
+        probs = hamilton_filter(returns, [0.0, -0.01], [0.01, 0.03], 0.95, 0.90)
+        assert len(probs) == 200
+        assert all(0 <= p <= 1 for p in probs)
+
+    def test_hamilton_smooth(self):
+        rng = np.random.default_rng(42)
+        returns = 0.01 * rng.standard_normal(200)
+        probs = hamilton_smooth(returns, [0.0, -0.01], [0.01, 0.03], 0.95, 0.90)
+        assert len(probs) == 200
+        assert all(0 <= p <= 1 for p in probs)
+
+    def test_stressed_state_higher_vol(self):
+        """State 1 (stressed) should have higher vol after fitting."""
+        rng = np.random.default_rng(42)
+        returns = 0.01 * rng.standard_normal(500)
+        mu0, s0, mu1, s1, _, _, _ = hamilton_fit(returns, n_restarts=5)
+        assert s1 >= s0, f"Stressed sigma {s1} should >= normal sigma {s0}"

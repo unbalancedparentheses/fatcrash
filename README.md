@@ -4,7 +4,7 @@
 
 The median tail index across 138 countries is alpha = 1.57. Standard risk models assume finite variance (alpha > 2) and often finite kurtosis (alpha > 4). For the majority of the world's currencies, these assumptions are empirically false. fatcrash detects crashes by measuring what actually matters: the tail.
 
-Python + Rust (PyO3). 17 crash detection methods + 5 regime detection algorithms + 7 market regime signal families. 500 years of data.
+Python + Rust (PyO3). 18 crash detection methods across 5 families + 7 market regime signal families. 500 years of data.
 
 ```python
 from fatcrash.data.ingest import from_sample
@@ -54,111 +54,113 @@ VaR under normality, Sharpe ratios, CAPM betas, mean-variance optimization — a
 
 ## Methods
 
-### Overview
+18 methods organized into 5 families. Each family detects a different type of signal — the aggregator combines them and rewards cross-family agreement.
 
-| # | Method | Category | What it measures | Key output |
-|---|--------|----------|-----------------|------------|
-| 1 | Hill | Tail | Tail index from order statistics | alpha (< 2 = infinite variance) |
-| 2 | Pickands | Tail | Extreme value index, all domains | gamma (> 0 = heavy tail) |
-| 3 | DEH | Tail | Tail index via moment estimator | gamma (> 0 = heavy tail) |
-| 4 | QQ | Tail | Tail index from QQ-plot slope | alpha (< 4 = fat tail) |
-| 5 | Taleb kappa | Tail | CLT convergence rate | kappa (0 = Gaussian, 1 = Cauchy) |
-| 6 | Max-stability kappa | Tail | Block-max concentration | kappa vs benchmark |
-| 7 | Max-to-Sum | Tail | Infinite variance diagnostic | ratio (> 0 if alpha < 2) |
-| 8 | Hurst | Regime | Persistence via R/S analysis | H (> 0.5 = trending) |
-| 9 | DFA | Regime | Persistence, non-stationary-robust | alpha (> 0.5 = trending) |
-| 10 | Spectral | Regime | Long memory from frequency domain | d (> 0 = long memory) |
-| 11 | Momentum | Regime | 3-12 month trailing return + reversal | momentum, reversal signal |
-| 12 | GPD | EVT | Tail risk (VaR, ES) | VaR, Expected Shortfall |
-| 13 | GEV | EVT | Block maxima classification | Frechet / Gumbel / Weibull |
-| 14 | LPPLS + GSADF | Bubble | Bubble shape + explosive unit roots | critical time, confidence |
-| 15 | M-LNN | Bubble (NN) | Per-series LPPLS via neural network | tc, m, omega, confidence |
-| 16 | P-LNN | Bubble (NN) | Pre-trained LPPLS (~700x faster) | tc, m, omega, confidence |
-| 17 | Price velocity | Structure | Volatility acceleration (cascade detection) | velocity signal |
+### Family 1: Bubble Detection
 
-**Regime detection algorithms** (implemented in Rust, F1 on core dataset):
+Detects super-exponential growth and explosive dynamics. The strongest individual predictors.
 
-| # | Algorithm | What it computes | F1 | Notes |
-|---|-----------|-----------------|:--:|-------|
-| R-A1 | RV Spike | Short-term RV vs long-term baseline (21d / 126d) | 32% | Detects volatility regime change |
-| R-A2 | CSD on Volatility | AR(1) + variance of rolling RV series | 34% | Tipping point detection (Scheffer 2009) |
-| R-A3 | Hamilton Filter | 2-state HMM, EM estimation, Kim smoother | 29% | 88% recall on major (>30%) crashes |
-| R-A4 | Realized Variance | Simple, Parkinson, Garman-Klass estimators | — | Foundation for RV spike and CSD |
-| R-A5 | Jump Risk (BNS) | Bipower variation, jump variance, z-test | — | Building block (poor at daily frequency alone) |
-
-### Tail estimation
-
-**Hill estimator** (Hill, 1975). Estimates alpha from the k largest order statistics: alpha = [1/k * sum log(X_(i) / X_(k+1))]^(-1). The tail index governs tail decay: P(X > x) ~ x^(-alpha). Alpha < 2 means infinite variance; alpha < 4 means infinite kurtosis. Includes Huisman et al. (2001) small-sample bias correction.
-
-**Pickands estimator** (Pickands, 1975). Estimates gamma = 1/alpha using three order statistics: gamma = log((X_(k) - X_(2k)) / (X_(2k) - X_(4k))) / log(2). Valid for all three domains of attraction (Frechet, Gumbel, Weibull), unlike Hill which assumes heavy tails.
-
-**DEH moment estimator** (Dekkers, Einmahl & de Haan, 1989). Uses first and second moments of log-spacings: gamma = M1 + 1 - (1/2)(1 - M1^2/M2)^(-1). Valid for all domains of attraction. Complements Hill (heavy-tail only) and Pickands (higher variance).
-
-**QQ estimator.** Regresses log(X_(i)) vs -log(i/(k+1)) for the k largest observations. Slope = 1/alpha. Simple, visual, good for regime change detection in rolling windows.
-
-**Taleb's kappa** (Taleb, 2019). Measures how fast the sample mean converges: kappa = 2 - log(n/n0) / log(M(n)/M(n0)), where M(n) = E[|S_n - E[S_n]|]. Under the CLT, M(n) ~ sqrt(n), giving kappa = 0. For Cauchy, M(n) ~ n, giving kappa = 1. Answers what asymptotic theory cannot: *how many observations do you actually need?*
-
-**Max-stability kappa.** Partitions data into blocks, computes mean-of-block-maxima / global-maximum. For Gaussian data this ratio is near a Monte Carlo benchmark; for fat-tailed data, a single extreme dominates and the ratio drops.
-
-**Maximum-to-Sum ratio.** R_n = max(|X_i|) / sum(|X_i|). Converges to zero for thin tails (alpha > 2); stays positive when alpha < 2. The simplest diagnostic for whether variance exists.
-
-### Long-range dependence
-
-**Hurst exponent** (Hurst, 1951). Persistence via rescaled range (R/S) analysis. H = 0.5 is a random walk; H > 0.5 means trends persist; H < 0.5 means mean-reversion.
-
-**DFA** (Peng et al., 1994). Detrended fluctuation analysis: divides into windows, removes linear trend per window, regresses log(RMS of residuals) vs log(window size). Handles non-stationarity better than R/S — best non-bubble crash detector (82% recall, 34% F1).
-
-**Spectral exponent** (Geweke & Porter-Hudak, 1983). Estimates long-memory parameter d from the periodogram near frequency zero: f(lambda) ~ |lambda|^(1-2d). Relation to Hurst: d = H - 0.5. Confirms persistence from the frequency domain.
-
-**Momentum** (Jegadeesh & Titman, 1993). Trailing log return over 3, 6, and 12-month windows. Momentum *reversal* — when long-term momentum is positive but short-term turns negative — is a crash precursor. The divergence between 12-month and 1-month momentum captures the transition from bubble buildup to unwind.
-
-**Price velocity** (cascade detector). Rate of change of realized volatility: velocity = (vol[t] - vol[t-lag]) / vol[t-lag]. Detects forced-liquidation cascades where volatility itself accelerates — the signature of events like Volmageddon (Feb 5, 2018: XIV lost 97%, VIX spiked 116%) or the Sep 2019 repo blowup.
-
-### Extreme value theory
-
-**GPD** (Balkema & de Haan, 1974). Fits exceedances over a threshold to the Generalized Pareto Distribution. Yields VaR and Expected Shortfall at arbitrary confidence levels.
-
-**GEV** (Fisher & Tippett, 1928). Fits block maxima to the Generalized Extreme Value distribution. Classifies into Frechet (xi > 0, heavy tail), Gumbel (xi = 0, exponential), or Weibull (xi < 0, bounded).
-
-### Bubble detection
+| Method | What it measures | Key output | F1 |
+|--------|-----------------|------------|:--:|
+| LPPLS | Log-periodic power law bubble shape | Critical time tc, confidence | 61% |
+| LPPLS confidence | Multi-window LPPLS robustness | Confidence [0,1] | 47% |
+| GSADF | Explosive unit root (Phillips-Shi-Yu) | Test statistic vs CV | 38% |
+| M-LNN | Neural network LPPLS fitting (per-series) | tc, m, omega, confidence | 41% |
+| P-LNN | Pre-trained neural network (~700x faster) | tc, m, omega, confidence | 23% |
 
 **LPPLS** (Sornette, 2003). Models bubble dynamics as a power law with log-periodic oscillations: log(p(t)) = A + B|tc-t|^m + C|tc-t|^m * cos(omega*log|tc-t| + phi). The critical time tc is the predicted crash date. Confidence measured by fitting across many windows. Nonlinear optimization via CMA-ES in Rust.
 
 **GSADF** (Phillips, Shi & Yu, 2015). Detects explosive unit root behavior — the econometric signature of bubbles. The supremum of recursive ADF statistics over all feasible subsamples, with Monte Carlo critical values. Complements LPPLS: LPPLS detects bubble *shape*, GSADF detects *explosive growth*.
 
-### Neural network methods (requires `pip install fatcrash[deep]`)
+**M-LNN / P-LNN** (Nielsen, Sornette & Raissi, 2024). Neural network approaches to LPPLS fitting. Both predict nonlinear parameters (tc, m, omega), then solve linear parameters via OLS. M-LNN trains one small network per series (F1=41%). P-LNN is pre-trained on 100K synthetic series, ~700x faster (F1=23%). Requires `pip install fatcrash[deep]`.
 
-Two neural network approaches to LPPLS fitting from Nielsen, Sornette & Raissi (2024). Both share a common pattern: the network predicts nonlinear LPPLS parameters (tc, m, omega), then linear parameters (A, B, C1, C2) are solved analytically via OLS.
+### Family 2: Tail Estimation
 
-**M-LNN** — Mono-LPPLS Neural Network. One small network (2 hidden layers, 64 units each) trained per time series. **F1=41%, Recall=56%** — the strongest NN method.
+Measures how fat the tails are — the shape of the distribution, not specific crash timing. Fat tails mean extreme events are far more likely than Gaussian models predict.
 
-```python
-from fatcrash.nn.mlnn import fit_mlnn
-result = fit_mlnn(times, log_prices, epochs=200, lr=1e-2)
-# result.tc, result.m, result.omega, result.is_bubble, result.confidence
-```
+| Method | What it measures | Key output | F1 |
+|--------|-----------------|------------|:--:|
+| Hill | Tail index from order statistics | alpha (< 2 = infinite variance) | 16% |
+| Pickands | Extreme value index, all domains | gamma (> 0 = heavy tail) | 27% |
+| DEH | Tail index via moment estimator | gamma (> 0 = heavy tail) | 26% |
+| QQ | Tail index from QQ-plot slope | alpha (< 4 = fat tail) | 23% |
+| Taleb kappa | CLT convergence rate | kappa (0 = Gaussian, 1 = Cauchy) | 25% |
+| Max-stability kappa | Block-max concentration | kappa vs benchmark | 27% |
+| Max-to-Sum | Infinite variance diagnostic | ratio (> 0 if alpha < 2) | 18% |
 
-**P-LNN** — Poly-LPPLS Neural Network. Pre-trained on 100K synthetic LPPLS series, ~700x faster than CMA-ES at inference. **F1=23%, Recall=23%** — fast but lower accuracy.
+**Hill estimator** (Hill, 1975). alpha = [1/k * sum log(X_(i) / X_(k+1))]^(-1). The tail index governs tail decay: P(X > x) ~ x^(-alpha). Alpha < 2 means infinite variance; alpha < 4 means infinite kurtosis. Includes Huisman et al. (2001) small-sample bias correction.
 
-```python
-from fatcrash.nn.plnn import train_plnn, predict_plnn
-model = train_plnn(variant="P-LNN-100K", n_samples=100_000)
-result = predict_plnn(model, times, log_prices)
-```
+**Pickands estimator** (Pickands, 1975). gamma = log((X_(k) - X_(2k)) / (X_(2k) - X_(4k))) / log(2). Valid for all three domains of attraction (Frechet, Gumbel, Weibull), unlike Hill which assumes heavy tails.
 
-### Regime detection algorithms
+**DEH moment estimator** (Dekkers, Einmahl & de Haan, 1989). gamma = M1 + 1 - (1/2)(1 - M1^2/M2)^(-1). Valid for all domains of attraction. Complements Hill (heavy-tail only) and Pickands (higher variance).
 
-All implemented in Rust with PyO3 bindings.
+**QQ estimator.** Regresses log(X_(i)) vs -log(i/(k+1)) for the k largest observations. Slope = 1/alpha. Good for regime change detection in rolling windows.
 
-**Realized Variance.** From daily returns: `RV_t = (252/W) * sum(r_i^2)`. Parkinson estimator (from OHLC): `RV_Park = (252/(4*ln2*W)) * sum(ln(H/L)^2)`. Garman-Klass (most efficient from OHLC): `GK_i = 0.5*(ln(H/L))^2 - (2*ln2-1)*(ln(C/O))^2`. Foundation for the signals below.
+**Taleb's kappa** (Taleb, 2019). kappa = 2 - log(n/n0) / log(M(n)/M(n0)). Under the CLT, M(n) ~ sqrt(n), giving kappa = 0. For Cauchy, M(n) ~ n, giving kappa = 1. Answers: *how many observations do you actually need for the sample mean to converge?*
 
-**RV Spike.** Compares short-term realized variance (21-day) to a long-term baseline (126-day): `ratio = RV_short / RV_long`. When ratio > 2x, volatility is spiking — the signature of regime change. More robust than BNS JV/RV fraction at daily frequency. F1=32%.
+**Max-stability kappa.** Partitions data into blocks, computes mean-of-block-maxima / global-maximum. For Gaussian data this ratio is near a Monte Carlo benchmark; for fat-tailed data, a single extreme dominates and the ratio drops.
 
-**Jump Risk Decomposition.** BNS bipower variation: `BV_t = (pi/2) * (1/(W-1)) * sum(|r_i| * |r_{i-1}|)`. Jump variance: `JV_t = max(RV_t - BV_t, 0)`. Building block for the RV spike signal. The JV/RV fraction alone doesn't discriminate at daily frequency (Bollerslev & Todorov, 2011 showed it works at *intraday* frequency).
+**Maximum-to-Sum ratio.** R_n = max(|X_i|) / sum(|X_i|). Converges to zero for thin tails (alpha > 2); stays positive when alpha < 2. The simplest diagnostic for whether variance exists.
 
-**Critical Slowing Down** (Scheffer et al., 2009). Near a tipping point, systems recover more slowly. Observable: rising AR(1) coefficient AND rising variance simultaneously. Applied to the *volatility* series (rolling RV), not raw returns — raw returns have near-zero autocorrelation, so AR(1) on returns is meaningless. Volatility has strong clustering, so CSD on the vol series detects genuine regime transitions. Uses windows of 63/21. F1=34%, 51% recall.
+### Family 3: Extreme Value Theory
 
-**Hamilton Filter** (Hamilton, 1989). 2-state HMM: normal (s=0) and stressed (s=1), each with own mean and variance. Forward filter with Bayesian update. EM estimation with parallel random restarts (rayon). Kim smoother for smoothed probabilities. Overall F1=29%, but **88% recall on major (>30%) crashes**. Backward-looking: it confirms you're in a crisis, it doesn't predict one.
+Directly models the distribution of extreme losses. Produces actionable risk numbers (VaR, ES).
+
+| Method | What it measures | Key output | F1 |
+|--------|-----------------|------------|:--:|
+| GPD | Tail risk from exceedances | VaR, Expected Shortfall | 19% |
+| GEV | Block maxima classification | Frechet / Gumbel / Weibull | — |
+
+**GPD** (Balkema & de Haan, 1974). Fits exceedances over a threshold to the Generalized Pareto Distribution. Yields VaR and Expected Shortfall at arbitrary confidence levels.
+
+**GEV** (Fisher & Tippett, 1928). Fits block maxima to the Generalized Extreme Value distribution. Classifies into Frechet (xi > 0, heavy tail), Gumbel (xi = 0, exponential), or Weibull (xi < 0, bounded).
+
+### Family 4: Regime & Persistence
+
+Detects transitions in market dynamics — from calm to turbulent, mean-reverting to trending, stable to critical. These methods answer "is the regime shifting?" rather than "how fat are the tails?"
+
+| Method | What it measures | Key output | F1 |
+|--------|-----------------|------------|:--:|
+| DFA | Persistence, non-stationary-robust | alpha (> 0.5 = trending) | 34% |
+| CSD on volatility | Tipping point detection | AR(1) + variance rising | 34% |
+| RV spike | Short-term vol vs baseline | ratio (> 2x = regime change) | 32% |
+| Hamilton filter | 2-state HMM regime classification | P(stressed) | 29% |
+| Hurst | Persistence via R/S analysis | H (> 0.5 = trending) | 28% |
+| Spectral | Long memory from frequency domain | d (> 0 = long memory) | 25% |
+| Momentum reversal | Trend breakdown detection | reversal signal | — |
+| Price velocity | Volatility acceleration | velocity (cascade detection) | — |
+
+**DFA** (Peng et al., 1994). Detrended fluctuation analysis: divides into windows, removes linear trend, regresses log(RMS of residuals) vs log(window size). Handles non-stationarity better than R/S — best non-bubble crash detector (82% recall, 34% F1).
+
+**Critical Slowing Down** (Scheffer et al., 2009). Near a tipping point, systems recover more slowly. Observable: rising AR(1) coefficient AND rising variance simultaneously. Applied to the *volatility* series (rolling RV), not raw returns — raw returns have near-zero autocorrelation. Volatility has strong clustering, so CSD on the vol series detects genuine regime transitions. F1=34%, 51% recall.
+
+**RV Spike.** Compares short-term realized variance (21-day) to a long-term baseline (126-day): `ratio = RV_short / RV_long`. When ratio > 2x, volatility is spiking. More robust than BNS JV/RV fraction at daily frequency. F1=32%.
+
+**Hamilton Filter** (Hamilton, 1989). 2-state HMM with EM estimation and Kim smoother. Overall F1=29%, but **88% recall on major (>30%) crashes**. Backward-looking: it confirms you're in a crisis, it doesn't predict one.
+
+**Hurst exponent** (Hurst, 1951). Persistence via rescaled range (R/S) analysis. H = 0.5 is a random walk; H > 0.5 means trends persist; H < 0.5 means mean-reversion.
+
+**Spectral exponent** (Geweke & Porter-Hudak, 1983). Estimates long-memory parameter d from the periodogram near frequency zero. Relation to Hurst: d = H - 0.5. Confirms persistence from the frequency domain.
+
+**Momentum** (Jegadeesh & Titman, 1993). Trailing log return over 3, 6, and 12-month windows. Momentum *reversal* — when long-term momentum is positive but short-term turns negative — is a crash precursor.
+
+**Price velocity** (cascade detector). Rate of change of realized volatility: velocity = (vol[t] - vol[t-lag]) / vol[t-lag]. Detects forced-liquidation cascades where volatility itself accelerates — the signature of Volmageddon (Feb 5, 2018: XIV lost 97%, VIX spiked 116%) or the Sep 2019 repo blowup.
+
+**Building blocks** (not standalone signals): Realized variance (simple, Parkinson, Garman-Klass estimators), bipower variation and jump variance decomposition (BNS). Foundation for RV spike and CSD.
+
+### Family 5: Liquidity
+
+Volume-based signals that detect liquidity dry-ups. Brings a dimension no price-only method can capture.
+
+| Method | What it measures | Key output | F1 |
+|--------|-----------------|------------|:--:|
+| Amihud illiquidity | Price impact per unit volume | |return|/volume ratio | 32% |
+
+**Amihud illiquidity** (Amihud, 2002). mean(|return| / volume) over a rolling window. Higher values = less liquid = harder to trade without moving price. Illiquidity spikes precede and accompany crashes because market makers widen spreads and pull quotes. The only method in fatcrash that uses volume data. F1=32%, with 71% recall on small (<15%) crashes — catches liquidity dry-ups that price-only methods miss.
+
+### Additional Rust primitives
+
+The Rust layer also exposes **realized skewness** (rolling third moment / std^3, captures distributional asymmetry) and **absorption ratio** (fraction of variance in top eigenvector of cross-asset correlation matrix, measures systemic coupling). Both are available as `_core` functions but not included in the aggregator — realized skewness overlaps with tail estimators (F1=30% core, drops to 19% extended), and absorption ratio requires multi-asset alignment at test time (F1=29%).
 
 ### Constant volatility strategy
 
@@ -168,14 +170,15 @@ Position sizing via inverse volatility targeting: weight = target_vol / realized
 
 ## Signal Aggregation
 
-Methods grouped into 4 independent categories. When 3+ categories agree, probability gets a +15% bonus.
+Methods grouped into 5 independent families (matching the method categories above). When 3+ families have elevated signals, probability gets a +15% bonus.
 
-| Category | Methods | What it detects |
-|----------|---------|-----------------|
+| Family | Methods | What it detects |
+|--------|---------|-----------------|
 | **Bubble** | LPPLS, GSADF, M-LNN, P-LNN | Super-exponential growth, explosive unit roots |
 | **Tail** | Hill, Pickands, DEH, QQ, Taleb Kappa, Max-Stability Kappa, Max-to-Sum, GPD | Tail thickening, distributional regime shifts |
-| **Regime** | Hurst, DFA, Spectral, Momentum reversal, CSD (on vol), Hamilton | Transition from mean-reverting to persistent dynamics, tipping points |
+| **Regime** | Hurst, DFA, Spectral, Momentum reversal, CSD (on vol), Hamilton | Persistence shifts, tipping points, regime transitions |
 | **Structure** | Multiscale, LPPLS tc proximity, Price velocity, RV spike | Cross-timeframe agreement, timing, cascade detection |
+| **Liquidity** | Amihud illiquidity | Volume-based liquidity dry-ups |
 
 Indicators are also computed at daily, 3-day, and weekly frequencies. A signal at one scale may be noise; a signal across all three is structural.
 
@@ -197,6 +200,7 @@ All accuracy numbers are in-sample on historical data. Methods are tested on bot
 | GSADF | 15 | 24 | 24 | 126 | 38% | 38% | 38% |
 | **DFA** | **32** | **115** | **7** | **35** | **22%** | **82%** | **34%** |
 | CSD (on vol) | 20 | 59 | 19 | 91 | 25% | 51% | 34% |
+| Amihud | 19 | 60 | 20 | 90 | 24% | 49% | 32% |
 | RV spike | 21 | 71 | 18 | 79 | 23% | 54% | 32% |
 | Hamilton | 16 | 57 | 23 | 93 | 22% | 41% | 29% |
 | Hurst | 23 | 101 | 16 | 49 | 19% | 59% | 28% |
@@ -247,6 +251,7 @@ LPPLS maintains 89% recall on the extended dataset. GSADF jumps from F1=38% to F
 | LPPLS confidence | 44% | 50% | 47% |
 | GSADF | 32% | 57% | 41% |
 | M-LNN | 24% | 59% | 34% |
+| Amihud | 21% | 49% | 30% |
 | RV spike | 16% | 60% | 25% |
 | QQ | 15% | 54% | 24% |
 | Kappa | 14% | 53% | 23% |
@@ -273,6 +278,7 @@ LPPLS recall holds at 90% across 96 crash windows spanning crypto, equities, com
 | DFA | 86% | 88% | 62% |
 | Hurst | 57% | 65% | 50% |
 | M-LNN | 57% | 65% | 38% |
+| Amihud | **71%** | 47% | 12% |
 | RV spike | 50% | 53% | 62% |
 | CSD (on vol) | 50% | 47% | 62% |
 | LPPLS confidence | 43% | 59% | 12% |
@@ -433,7 +439,7 @@ Each signal is normalized (z-score or percentile rank), aggregated into thematic
 | # | Family | Signals | What it detects |
 |---|--------|---------|-----------------|
 | R1 | Risk Premium | VRP, RV spike | Variance and tail-risk compensation |
-| R2 | Liquidity | SOFR-OIS, TED, Amihud, xccy basis | Funding stress, market illiquidity |
+| R2 | Liquidity | SOFR-OIS, TED, **Amihud** (implemented), xccy basis | Funding stress, market illiquidity |
 | R3 | Volatility Regime | VIX slope, SKEW, MOVE, VVIX | Vol term structure inversion, vol-of-vol |
 | R4 | Credit & Macro | OFR FSI, credit spreads, EBP, yield curve | Credit stress, macro deterioration |
 | R5 | Structure & Flows | Cross-asset eigenvalue, COT, ETF flows | Diversification breakdown, positioning extremes |
@@ -538,7 +544,8 @@ Rust (PyO3, _core.so)                Python
 │       QQ, Kappa, Taleb,    │──────▶│   tail_indicator.py              │
 │       MaxSum, Hurst, DFA,  │       │   vol_indicator.py               │
 │       Spectral, Momentum,  │       │   lppls_indicator.py             │
-│       Velocity             │       │   bubble_indicator.py            │
+│       Velocity, Skewness,  │       │   bubble_indicator.py            │
+│       Amihud, Absorption   │       │                                  │
 │                            │       │   evt_indicator.py               │
 │ EVT:  GPD, GEV             │       │   regime_indicator.py            │
 │                            │       │                                  │

@@ -4,7 +4,7 @@
 
 The median tail index across 138 countries is alpha = 1.57. Standard risk models assume finite variance (alpha > 2) and often finite kurtosis (alpha > 4). For the majority of the world's currencies, these assumptions are empirically false. fatcrash detects crashes by measuring what actually matters: the tail.
 
-Python + Rust (PyO3). 17 crash detection methods + 4 regime detection algorithms + 7 market regime signal families. 500 years of data.
+Python + Rust (PyO3). 17 crash detection methods + 5 regime detection algorithms + 7 market regime signal families. 500 years of data.
 
 ```python
 from fatcrash.data.ingest import from_sample
@@ -89,6 +89,9 @@ All accuracy numbers are in-sample on historical data. Methods are tested on bot
 | M-LNN | 22 | 47 | 17 | 103 | 32% | 56% | 41% |
 | GSADF | 15 | 24 | 24 | 126 | 38% | 38% | 38% |
 | **DFA** | **32** | **115** | **7** | **35** | **22%** | **82%** | **34%** |
+| CSD (on vol) | 20 | 59 | 19 | 91 | 25% | 51% | 34% |
+| RV spike | 21 | 71 | 18 | 79 | 23% | 54% | 32% |
+| Hamilton | 16 | 57 | 23 | 93 | 22% | 41% | 29% |
 | Hurst | 23 | 101 | 16 | 49 | 19% | 59% | 28% |
 | Pickands | 19 | 82 | 20 | 68 | 19% | 49% | 27% |
 | Kappa | 19 | 83 | 20 | 67 | 19% | 49% | 27% |
@@ -123,6 +126,7 @@ To test generalization beyond the three core assets, we evaluate on 23 FRED fore
 | GSADF | 40 | 91 | 17 | 390 | 31% | 70% | 43% |
 | M-LNN | 35 | 136 | 22 | 345 | 20% | 61% | 31% |
 | QQ | 37 | 215 | 20 | 251 | 15% | 65% | 24% |
+| RV spike | 37 | 237 | 20 | 244 | 14% | 65% | 22% |
 | Max-to-Sum | 33 | 210 | 24 | 261 | 14% | 58% | 22% |
 | Kappa | 32 | 220 | 25 | 261 | 13% | 56% | 21% |
 | Hill | 28 | 202 | 29 | 279 | 12% | 49% | 20% |
@@ -131,8 +135,10 @@ To test generalization beyond the three core assets, we evaluate on 23 FRED fore
 | DFA | 41 | 374 | 16 | 100 | 10% | 72% | 17% |
 | Pickands | 26 | 232 | 31 | 230 | 10% | 46% | 17% |
 | GPD VaR | 17 | 169 | 10 | 196 | 9% | 63% | 16% |
+| CSD (on vol) | 19 | 158 | 38 | 323 | 11% | 33% | 16% |
 | DEH | 25 | 233 | 32 | 233 | 10% | 44% | 16% |
 | Taleb Kappa | 21 | 187 | 36 | 280 | 10% | 37% | 16% |
+| Hamilton | 22 | 212 | 35 | 269 | 9% | 39% | 15% |
 | P-LNN | 5 | 52 | 52 | 429 | 9% | 9% | 9% |
 
 LPPLS maintains 89% recall on the extended dataset. GSADF jumps from F1=38% to F1=43% — forex pairs provide more explosive episodes for GSADF to detect. DFA's precision drops (10% vs 22%) because forex data shows persistent dynamics even in non-crash periods.
@@ -147,14 +153,17 @@ Merging core (BTC/SPY/Gold) and extended (FRED/OptsBT) datasets:
 | LPPLS confidence | 44% | 50% | 47% |
 | GSADF | 32% | 57% | 41% |
 | M-LNN | 24% | 59% | 34% |
+| RV spike | 16% | 60% | 25% |
 | QQ | 15% | 54% | 24% |
 | Kappa | 14% | 53% | 23% |
 | DFA | 13% | 76% | 22% |
+| CSD (on vol) | 15% | 41% | 22% |
 | Hurst | 13% | 66% | 22% |
 | Max-to-Sum | 13% | 47% | 21% |
 | Spectral | 15% | 29% | 20% |
 | Pickands | 13% | 47% | 20% |
 | DEH | 12% | 45% | 19% |
+| Hamilton | 12% | 40% | 19% |
 | Hill | 12% | 41% | 19% |
 | Taleb Kappa | 12% | 35% | 18% |
 | GPD VaR | 10% | 53% | 17% |
@@ -170,12 +179,15 @@ LPPLS recall holds at 90% across 96 crash windows spanning crypto, equities, com
 | DFA | 86% | 88% | 62% |
 | Hurst | 57% | 65% | 50% |
 | M-LNN | 57% | 65% | 38% |
+| RV spike | 50% | 53% | 62% |
+| CSD (on vol) | 50% | 47% | 62% |
 | LPPLS confidence | 43% | 59% | 12% |
+| Hamilton | 29% | 29% | **88%** |
 | DEH | 43% | 41% | 62% |
 | Taleb Kappa | 21% | 35% | 50% |
 | GSADF | 14% | 59% | 38% |
 
-LPPLS catches 100% of medium crashes (15-30% drawdowns). LPPLS confidence drops to 12% on major crashes — the multi-window aggregation is too conservative for the fastest, most violent drawdowns. DEH and Taleb Kappa improve on major crashes (62% and 50%), detecting the tail-thickening that precedes large moves.
+LPPLS catches 100% of medium crashes (15-30% drawdowns). LPPLS confidence drops to 12% on major crashes — the multi-window aggregation is too conservative for the fastest, most violent drawdowns. **Hamilton has 88% recall on major crashes** — it's the best single method for detecting large (>30%) drawdowns, though it rarely fires on smaller crashes. DEH and Taleb Kappa improve on major crashes (62% and 50%), detecting the tail-thickening that precedes large moves.
 
 ### Weighted ensemble aggregator
 
@@ -185,21 +197,21 @@ Combines all methods via weighted average + category agreement bonus. When 3+ in
 
 | Threshold | Level | Precision | Recall | F1 |
 |:---------:|-------|:---------:|:------:|:--:|
-| 0.3 | ELEVATED+ | 27% | 87% | 42% |
-| 0.4 | >40% | 38% | 72% | 50% |
-| **0.5** | **HIGH+** | **70%** | **41%** | **52%** |
-| 0.7 | CRITICAL+ | 0% | 0% | 0% |
+| 0.3 | ELEVATED+ | 23% | 82% | 36% |
+| 0.4 | >40% | 30% | 69% | 42% |
+| **0.5** | **HIGH+** | **54%** | **56%** | **55%** |
+| 0.7 | CRITICAL+ | 50% | 3% | 5% |
 
 **Extended dataset (57 crash, 481 non-crash):**
 
 | Threshold | Level | Precision | Recall | F1 |
 |:---------:|-------|:---------:|:------:|:--:|
-| 0.3 | ELEVATED+ | 16% | 91% | 27% |
-| 0.4 | >40% | 22% | 77% | 34% |
-| **0.5** | **HIGH+** | **42%** | **61%** | **50%** |
-| 0.7 | CRITICAL+ | 0% | 0% | 0% |
+| 0.3 | ELEVATED+ | 14% | 95% | 25% |
+| 0.4 | >40% | 20% | 81% | 32% |
+| **0.5** | **HIGH+** | **36%** | **58%** | **44%** |
+| 0.7 | CRITICAL+ | 17% | 2% | 3% |
 
-At threshold 0.5, the aggregator achieves P=70%, R=41%, F1=52% on the core dataset — the highest precision of any configuration. On the extended dataset it maintains F1=50% with P=42%, R=61%. The best individual method (LPPLS, F1=61%) still outperforms the ensemble on F1; the ensemble's advantage is precision (70% vs 47%) at the cost of recall.
+At threshold 0.5, the aggregator achieves P=54%, R=56%, F1=55% on the core dataset. On the extended dataset it maintains F1=44% with P=36%, R=58%. The best individual method (LPPLS, F1=61%) still outperforms the ensemble on F1; the ensemble's advantage is balanced precision/recall rather than LPPLS's high-recall-low-precision profile.
 
 ### 6/6 known GBP/USD crises detected
 
@@ -354,20 +366,21 @@ Method agreement: Pickands xi > 0, DEH gamma > 0, Hill alpha < 4, and QQ alpha <
 | 16 | P-LNN | Bubble (NN) | Pre-trained LPPLS (~700x faster) | tc, m, omega, confidence |
 | 17 | Price velocity | Structure | Volatility acceleration (cascade detection) | velocity signal |
 
-**Regime detection algorithms** (implemented in Rust):
+**Regime detection algorithms** (implemented in Rust, F1 on core dataset):
 
-| # | Algorithm | What it computes |
-|---|-----------|-----------------|
-| R-A1 | Realized Variance | Simple, Parkinson, Garman-Klass annualized variance estimators |
-| R-A2 | Jump Risk (BNS) | Bipower variation, jump variance, BNS z-test |
-| R-A3 | Critical Slowing Down | Rolling AR(1) + rolling variance rate of change |
-| R-A4 | Hamilton Filter | 2-state HMM with EM estimation, forward filter, Kim smoother |
+| # | Algorithm | What it computes | F1 | Notes |
+|---|-----------|-----------------|:--:|-------|
+| R-A1 | RV Spike | Short-term RV vs long-term baseline (21d / 126d) | 32% | Detects volatility regime change |
+| R-A2 | CSD on Volatility | AR(1) + variance of rolling RV series | 34% | Tipping point detection (Scheffer 2009) |
+| R-A3 | Hamilton Filter | 2-state HMM, EM estimation, Kim smoother | 29% | 88% recall on major (>30%) crashes |
+| R-A4 | Realized Variance | Simple, Parkinson, Garman-Klass estimators | — | Foundation for RV spike and CSD |
+| R-A5 | Jump Risk (BNS) | Bipower variation, jump variance, z-test | — | Building block (poor at daily frequency alone) |
 
 **Market regime signal families** (macro/microstructure — see [Market Regime Signals](#market-regime-signals)):
 
 | # | Family | Signals | What it detects |
 |---|--------|---------|-----------------|
-| R1 | Risk Premium | VRP, jump risk | Variance and tail-risk compensation |
+| R1 | Risk Premium | VRP, RV spike | Variance and tail-risk compensation |
 | R2 | Liquidity | SOFR-OIS, TED, Amihud, xccy basis, Treasury/equity vol ratio | Funding stress, market illiquidity |
 | R3 | Volatility Regime | VIX slope, SKEW, MOVE, VVIX | Vol term structure inversion, vol-of-vol |
 | R4 | Credit & Macro | OFR FSI, STLFSI, credit spreads, EBP, yield curve, term premium | Credit stress, macro deterioration |
@@ -449,7 +462,7 @@ Methods grouped into 4 independent categories. When 3+ categories agree, probabi
 |----------|---------|-----------------|
 | **Bubble** | LPPLS, GSADF, M-LNN, P-LNN | Super-exponential growth, explosive unit roots |
 | **Tail** | Hill, Pickands, DEH, QQ, Taleb Kappa, Max-Stability Kappa, Max-to-Sum, GPD | Tail thickening, distributional regime shifts |
-| **Regime** | Hurst, DFA, Spectral, Momentum reversal | Transition from mean-reverting to persistent dynamics, trend breaks |
+| **Regime** | Hurst, DFA, Spectral, Momentum reversal, CSD (on vol), Hamilton | Transition from mean-reverting to persistent dynamics, trend breaks, tipping points |
 | **Structure** | Multiscale, LPPLS tc proximity, Price velocity | Cross-timeframe agreement, timing, cascade detection |
 
 Indicators are also computed at daily, 3-day, and weekly frequencies. A signal at one scale may be noise; a signal across all three is structural.
@@ -482,11 +495,13 @@ The goal is transparent, inspectable signals grounded in the academic literature
 
 **Variance Risk Premium.** `VRP_t = (VIX/100)^2/12 - RV_monthly`. VRP > 0 is normal (paying for protection). VRP < 0 means realized vol exceeds implied (acute stress).
 
-**Jump Risk Decomposition.** BNS bipower variation: `BV_t = (pi/2) * (1/(W-1)) * sum(|r_i| * |r_{i-1}|)`. Jump variance: `JV_t = max(RV_t - BV_t, 0)`. The jump component dominates return predictability (Bollerslev & Todorov, 2011).
+**RV Spike Signal.** Compares short-term realized variance (21-day) to a long-term baseline (126-day): `ratio = RV_short / RV_long`. When ratio > 2x, volatility is spiking — the signature of regime change. More robust than BNS JV/RV fraction at daily frequency (BNS bipower variation was designed for 5-minute intraday data). F1=32%.
 
-**Hamilton Filter (2-state HMM).** States: normal (s=0) and stressed (s=1). Each state has its own mean and variance. Forward filter: predict → compute densities → update via Bayes' rule. Parameter estimation via EM (Baum-Welch). Use log-space for numerical stability. Multiple random restarts to avoid local optima.
+**Jump Risk Decomposition.** BNS bipower variation: `BV_t = (pi/2) * (1/(W-1)) * sum(|r_i| * |r_{i-1}|)`. Jump variance: `JV_t = max(RV_t - BV_t, 0)`. Building block for the RV spike signal. At daily frequency, the JV/RV fraction alone doesn't discriminate (Bollerslev & Todorov, 2011 showed it dominates return predictability at *intraday* frequency).
 
-**Critical Slowing Down.** Near a tipping point, systems recover more slowly from perturbations. Observable: rising AR(1) coefficient AND rising variance simultaneously over rolling windows. Apply to credit spreads, VIX, and the cross-asset correlation eigenvalue.
+**Hamilton Filter (2-state HMM).** States: normal (s=0) and stressed (s=1). Each state has its own mean and variance. Forward filter: predict → compute densities → update via Bayes' rule. Parameter estimation via EM (Baum-Welch). Use log-space for numerical stability. Multiple random restarts (parallelized via rayon) to avoid local optima. Overall F1=29%, but **88% recall on major (>30%) crashes** — the best single method for detecting large drawdowns. Backward-looking: it confirms you're in a crisis, it doesn't predict one.
+
+**Critical Slowing Down.** Near a tipping point, systems recover more slowly from perturbations (Scheffer et al., 2009). Observable: rising AR(1) coefficient AND rising variance simultaneously. **Important:** CSD must be applied to the *volatility* series (rolling RV), not raw returns — raw returns have near-zero autocorrelation, so AR(1) on returns is meaningless. Volatility has strong clustering (autocorrelation), so CSD on the vol series detects genuine regime transitions. Uses windows of 63/21 (vs the original 252/63 which was too large). F1=34%, 51% recall.
 
 **Hawkes Process Branching Ratio** (future work). Intensity: `lambda(t) = mu + alpha * sum(exp(-beta*(t-t_i)))`. Branching ratio `n = alpha/beta`. Not yet implemented — the self-excitation signal is largely captured by CSD + velocity. Would require an L-BFGS-B optimizer and event-timestamp input rather than price series.
 

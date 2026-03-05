@@ -145,19 +145,22 @@ def detect(
     # Regime detection
     try:
         from fatcrash.indicators.regime_indicator import (
-            estimate_jump_risk, estimate_csd, estimate_hamilton,
+            estimate_rv_spike, estimate_csd_on_vol, estimate_hamilton,
         )
 
-        jump = estimate_jump_risk(returns)
+        spike = estimate_rv_spike(returns, short_window=21, long_window=126)
+        spike_status = "[red]!!![/]" if spike.ratio > 2.0 else (
+            "[yellow]![/]" if spike.ratio > 1.5 else "[green]OK[/]"
+        )
         table.add_row(
-            "Jump fraction",
-            f"{jump.jump_fraction:.3f}",
-            f"JV={jump.jv:.4f}",
-            "[red]!!![/]" if jump.jump_fraction > 0.3 else "[green]OK[/]",
+            "RV spike",
+            f"{spike.ratio:.2f}x",
+            f"short={spike.rv_short:.4f}",
+            spike_status,
         )
 
-        if len(returns) > 350:
-            csd = estimate_csd(returns)
+        csd = estimate_csd_on_vol(returns, rv_window=21, csd_window=63, roc_window=21)
+        if csd is not None:
             csd_status = "[red]!!![/]" if csd.warning else "[green]OK[/]"
             table.add_row(
                 "CSD warning",
@@ -208,11 +211,11 @@ def backtest(
     from fatcrash.data import transforms
     from fatcrash.indicators.tail_indicator import rolling_tail_index, rolling_kappa, rolling_taleb_kappa
     from fatcrash.indicators.evt_indicator import rolling_var_es
-    from fatcrash.indicators.regime_indicator import rolling_jv, rolling_rv, estimate_hamilton
+    from fatcrash.indicators.regime_indicator import rolling_rv, estimate_hamilton
     from fatcrash.aggregator.signals import (
         aggregate_signals,
         hill_thinning_signal,
-        jump_risk_signal_converter,
+        rv_spike_signal,
         hamilton_stress_signal,
         kappa_regime_signal,
         taleb_kappa_signal,
@@ -245,9 +248,9 @@ def backtest(
     console.print("Computing rolling VaR/ES...")
     var_arr, es_arr = rolling_var_es(returns, window=window)
 
-    console.print("Computing rolling jump variance...")
-    jv_arr = rolling_jv(returns, window=min(window, 63))
-    rv_arr = rolling_rv(returns, window=min(window, 63))
+    console.print("Computing rolling realized variance...")
+    rv_short_arr = rolling_rv(returns, window=21)
+    rv_long_arr = rolling_rv(returns, window=min(window, 126))
 
     console.print("Fitting Hamilton filter...")
     hmm = estimate_hamilton(returns, n_restarts=5)
@@ -273,8 +276,8 @@ def backtest(
         if not np.isnan(var_arr[i]):
             components["gpd_var_exceedance"] = var_exceedance_signal(returns[i], var_arr[i])
 
-        if not np.isnan(jv_arr[i]) and not np.isnan(rv_arr[i]):
-            components["jump_risk_signal"] = jump_risk_signal_converter(jv_arr[i], rv_arr[i])
+        if not np.isnan(rv_short_arr[i]) and not np.isnan(rv_long_arr[i]):
+            components["rv_spike"] = rv_spike_signal(rv_short_arr[i], rv_long_arr[i])
 
         if i < len(hmm_probs) and not np.isnan(hmm_probs[i]):
             components["hamilton_stress"] = hamilton_stress_signal(hmm_probs[i])

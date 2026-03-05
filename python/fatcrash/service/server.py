@@ -42,10 +42,10 @@ def create_app() -> FastAPI:
         from fatcrash.data import ingest, transforms
         from fatcrash.indicators.tail_indicator import estimate_tail_index, estimate_kappa, estimate_taleb_kappa
         from fatcrash.indicators.evt_indicator import compute_var_es
-        from fatcrash.indicators.regime_indicator import estimate_jump_risk, estimate_hamilton
+        from fatcrash.indicators.regime_indicator import estimate_rv_spike, estimate_hamilton
         from fatcrash.aggregator.signals import (
             aggregate_signals,
-            jump_risk_signal_converter,
+            rv_spike_signal,
             hamilton_stress_signal,
             kappa_regime_signal,
             taleb_kappa_signal,
@@ -94,8 +94,8 @@ def create_app() -> FastAPI:
             pass
 
         try:
-            jump = estimate_jump_risk(returns)
-            components["jump_risk_signal"] = jump_risk_signal_converter(jump.jv, jump.rv)
+            spike = estimate_rv_spike(returns, short_window=21, long_window=126)
+            components["rv_spike"] = rv_spike_signal(spike.rv_short, spike.rv_long)
         except Exception:
             pass
 

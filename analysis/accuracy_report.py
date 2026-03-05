@@ -30,7 +30,7 @@ from fatcrash._core import (
     lppls_confidence,
     realized_variance, bipower_variation, jump_variance,
 )
-from fatcrash.indicators.regime_indicator import estimate_hamilton, estimate_csd
+from fatcrash.indicators.regime_indicator import estimate_hamilton, estimate_csd_on_vol, estimate_rv_spike
 from fatcrash.aggregator import signals as sig
 from fatcrash.aggregator.signals import aggregate_signals
 
@@ -329,19 +329,17 @@ def test_method_on_drawdown(df, peak_idx, window=120,
     else:
         results["spectral"] = None
 
-    # Jump risk
+    # RV spike (replaces BNS jump risk — more robust at daily frequency)
     try:
-        pre_rv = realized_variance(pre_ret, window=min(len(pre_ret), 21))
-        pre_jv = jump_variance(pre_ret, window=min(len(pre_ret), 21))
-        base_rv = realized_variance(base_ret, window=min(len(base_ret), 21))
-        base_jv = jump_variance(base_ret, window=min(len(base_ret), 21))
-        if not (np.isnan(pre_jv) or np.isnan(base_jv)):
-            results["jump_risk"] = pre_jv > base_jv
-            components["jump_risk_signal"] = sig.jump_risk_signal_converter(pre_jv, pre_rv)
+        spike = estimate_rv_spike(pre_ret, short_window=21, long_window=min(len(pre_ret), 63))
+        base_spike = estimate_rv_spike(base_ret, short_window=21, long_window=min(len(base_ret), 63))
+        if not (np.isnan(spike.ratio) or np.isnan(base_spike.ratio)):
+            results["rv_spike"] = spike.ratio > base_spike.ratio
+            components["rv_spike"] = sig.rv_spike_signal(spike.rv_short, spike.rv_long)
         else:
-            results["jump_risk"] = None
+            results["rv_spike"] = None
     except Exception:
-        results["jump_risk"] = None
+        results["rv_spike"] = None
 
     # Hamilton filter
     try:
@@ -357,12 +355,15 @@ def test_method_on_drawdown(df, peak_idx, window=120,
     except Exception:
         results["hamilton"] = None
 
-    # CSD
+    # CSD on volatility series (not raw returns)
     try:
-        if len(pre_ret) > 350:
-            csd = estimate_csd(pre_ret)
+        csd = estimate_csd_on_vol(pre_ret, rv_window=21, csd_window=42, roc_window=21)
+        if csd is not None:
             results["csd"] = csd.warning
-            components["csd_warning"] = 1.0 if csd.warning else (0.3 if (csd.ar1_rising or csd.var_rising) else 0.0)
+            components["csd_warning"] = sig.csd_warning_signal(
+                1.0 if csd.ar1_rising else -1.0,
+                1.0 if csd.var_rising else -1.0,
+            )
         else:
             results["csd"] = None
     except Exception:
@@ -564,7 +565,7 @@ def main():
         "lppls", "lppls_confidence", "gsadf", "hurst", "dfa",
         "kappa", "taleb_kappa", "pickands", "deh", "qq",
         "gpd_var", "maxsum", "spectral", "hill",
-        "jump_risk", "hamilton", "csd",
+        "rv_spike", "hamilton", "csd",
     ]
     nn_methods = ["mlnn", "plnn"] if run_nn else []
     all_methods = classical_methods + nn_methods

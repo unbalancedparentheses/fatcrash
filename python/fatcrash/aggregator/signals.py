@@ -70,7 +70,8 @@ DEFAULT_WEIGHTS = {
     # Other
     "multiscale": 0.06,
     # Regime detection algorithms (implemented in Rust)
-    "jump_risk_signal": 0.03,
+    "rv_spike": 0.03,
+    "jump_risk_signal": 0.03,  # legacy BNS fraction — kept for backward compat
     "csd_warning": 0.03,
     "hamilton_stress": 0.03,
     # Market regime signals (placeholder weights — require external data sources)
@@ -137,7 +138,7 @@ def aggregate_signals(
                    "momentum_reversal", "csd_warning", "hamilton_stress"],
         "structure": ["multiscale", "lppls_tc_proximity", "velocity_spike"],
         # Market regime signal families (macro/microstructure)
-        "risk_premium": ["vrp_signal", "jump_risk_signal"],
+        "risk_premium": ["vrp_signal", "rv_spike", "jump_risk_signal"],
         "liquidity": ["sofr_ois_z", "ted_z", "amihud_pct", "xccy_basis_z"],
         "vol_regime": ["vix_slope_z", "skew_z", "move_z", "vvix_z"],
         "credit_macro": ["ofr_fsi_z", "credit_spread_z", "ebp_z", "yield_curve_z"],
@@ -441,11 +442,39 @@ def jump_risk_signal_converter(jv: float, rv: float) -> float:
     return np.clip(fraction / 0.5, 0.0, 1.0)
 
 
-def csd_warning_signal(ar1_roc: float, var_roc: float) -> float:
-    """Signal from Critical Slowing Down.
+def rv_spike_signal(rv_short: float, rv_long: float) -> float:
+    """Signal from realized variance spike: short-term RV vs long-term baseline.
 
-    Dual increase (rising AR(1) + rising variance) = approaching tipping point.
-    Returns 1.0 if both positive, 0.5 if only one positive, 0.0 if neither.
+    When current RV exceeds baseline by 2x+, volatility is spiking — the
+    signature of regime change / crash onset. More robust than BNS JV/RV
+    fraction at daily frequency.
+
+    Args:
+        rv_short: Short-window RV (e.g. 21-day).
+        rv_long: Long-window RV baseline (e.g. 63-day or 126-day).
+
+    Returns:
+        Signal in [0, 1]. 0 = normal vol, 1 = vol spike ≥ 3x baseline.
+    """
+    if np.isnan(rv_short) or np.isnan(rv_long) or rv_long <= 0:
+        return 0.0
+    ratio = rv_short / rv_long
+    if ratio <= 1.0:
+        return 0.0
+    # Scale: 1x = no spike, 2x = moderate (0.5), 3x+ = full signal (1.0)
+    return np.clip((ratio - 1.0) / 2.0, 0.0, 1.0)
+
+
+def csd_warning_signal(ar1_roc: float, var_roc: float) -> float:
+    """Signal from Critical Slowing Down applied to volatility series.
+
+    Dual increase in AR(1) of vol + variance of vol = approaching tipping point.
+    Returns 1.0 if both positive, 0.3 if only one positive, 0.0 if neither.
+
+    Note: CSD should be applied to the *volatility* series (rolling RV), not
+    raw returns. Raw returns have near-zero autocorrelation, so AR(1) on
+    returns is meaningless. Volatility, however, has strong autocorrelation
+    (volatility clustering), so CSD on vol detects regime changes.
     """
     if np.isnan(ar1_roc) or np.isnan(var_roc):
         return 0.0

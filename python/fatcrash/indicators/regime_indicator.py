@@ -300,6 +300,30 @@ def rolling_rv(
     return np.asarray(realized_variance_rolling(returns, window=window, step=step))
 
 
+@dataclass
+class RVSpikeEstimate:
+    """RV spike: short-term vol vs long-term baseline."""
+    rv_short: float
+    rv_long: float
+    ratio: float  # rv_short / rv_long
+
+
+def estimate_rv_spike(
+    returns: npt.NDArray[np.float64],
+    short_window: int = 21,
+    long_window: int = 126,
+) -> RVSpikeEstimate:
+    """Compare short-term RV to long-term baseline RV.
+
+    More robust than BNS JV/RV fraction at daily frequency because it directly
+    measures volatility regime change rather than jump/continuous decomposition.
+    """
+    rv_short = realized_variance(returns, window=min(len(returns), short_window))
+    rv_long = realized_variance(returns, window=min(len(returns), long_window))
+    ratio = rv_short / rv_long if rv_long > 0 and not np.isnan(rv_long) else 1.0
+    return RVSpikeEstimate(rv_short=rv_short, rv_long=rv_long, ratio=ratio)
+
+
 def rolling_rv_parkinson(
     high: npt.NDArray[np.float64],
     low: npt.NDArray[np.float64],
@@ -385,7 +409,12 @@ def estimate_csd(
     window: int = 252,
     roc_window: int = 63,
 ) -> CSDEstimate:
-    """Check for critical slowing down (dual increase in AR(1) and variance)."""
+    """Check for critical slowing down (dual increase in AR(1) and variance).
+
+    Note: For meaningful results, pass a *volatility* series (rolling RV),
+    not raw returns. Raw returns have near-zero AR(1), so CSD on returns
+    is uninformative. Use ``estimate_csd_on_vol`` for the recommended approach.
+    """
     ar1_roc, var_roc, csd_sig = csd_indicator(data, window=window, roc_window=roc_window)
     ar1_roc = np.asarray(ar1_roc)
     var_roc = np.asarray(var_roc)
@@ -400,6 +429,47 @@ def estimate_csd(
     warn = float(last_csd[-1]) > 0 if len(last_csd) > 0 else False
 
     return CSDEstimate(ar1_rising=ar1_up, var_rising=var_up, warning=warn)
+
+
+def estimate_csd_on_vol(
+    returns: npt.NDArray[np.float64],
+    rv_window: int = 21,
+    csd_window: int = 63,
+    roc_window: int = 21,
+) -> CSDEstimate | None:
+    """CSD on the rolling realized variance series (the recommended approach).
+
+    Raw returns have near-zero autocorrelation, making CSD meaningless.
+    Volatility has strong autocorrelation (clustering), so CSD on the vol
+    series detects true regime changes.
+
+    Minimum data required: rv_window + csd_window + roc_window (~105 points).
+
+    Args:
+        returns: Log return series.
+        rv_window: Window for computing rolling realized variance (default 21).
+        csd_window: Window for AR(1) and variance in CSD (default 63).
+        roc_window: Window for rate-of-change in CSD (default 21).
+
+    Returns:
+        CSDEstimate or None if insufficient data.
+    """
+    min_needed = rv_window + csd_window + roc_window + 1
+    if len(returns) < min_needed:
+        return None
+
+    # Step 1: compute rolling RV series
+    rv_series = np.asarray(realized_variance_rolling(returns, window=rv_window, step=1))
+
+    # Drop NaN prefix from rolling RV
+    valid_mask = ~np.isnan(rv_series)
+    if valid_mask.sum() < csd_window + roc_window + 1:
+        return None
+
+    vol_series = rv_series[valid_mask]
+
+    # Step 2: apply CSD to the vol series
+    return estimate_csd(vol_series, window=csd_window, roc_window=roc_window)
 
 
 def rolling_csd(

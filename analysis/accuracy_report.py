@@ -514,6 +514,9 @@ def main():
     agg_thresholds = [0.3, 0.4, 0.5, 0.7]
     agg_tp_probs = []  # list of aggregator probabilities on crash windows
 
+    # For learned aggregator: collect (asset, components, label) per window
+    signal_samples = []  # list of (asset_name, components_dict, 1=crash/0=non-crash)
+
     for asset_name, threshold in [("btc", 0.15), ("spy", 0.08), ("gold", 0.08)]:
         df = datasets[asset_name]
         events = find_drawdowns(df, min_dd=threshold, min_apart=90)
@@ -549,6 +552,7 @@ def main():
             if comps:
                 agg_result = aggregate_signals(comps)
                 agg_tp_probs.append(agg_result.probability)
+                signal_samples.append((asset_name, dict(comps), 1))
 
     rdf = pd.DataFrame(all_results)
 
@@ -579,6 +583,7 @@ def main():
             if comps:
                 agg_result = aggregate_signals(comps)
                 agg_fp_probs.append(agg_result.probability)
+                signal_samples.append((asset_name, dict(comps), 0))
 
     # ══════════════════════════════════════════════
     # Part 1c: Compute and display metrics
@@ -684,6 +689,141 @@ def main():
         print("  Insufficient data for aggregator evaluation.")
 
     # ══════════════════════════════════════════════
+    # Part 1d: LEARNED AGGREGATOR (logistic regression + leave-one-asset-out)
+    # ══════════════════════════════════════════════
+    try:
+        from sklearn.linear_model import LogisticRegression
+        from sklearn.preprocessing import StandardScaler
+
+        print("\n" + "=" * 70)
+        print("LEARNED AGGREGATOR: LOGISTIC REGRESSION + LEAVE-ONE-ASSET-OUT CV")
+        print("=" * 70)
+
+        if len(signal_samples) > 20:
+            # Build feature matrix from signal components
+            # Use the same signal names across all samples
+            all_signal_names = sorted(set(
+                k for _, comps, _ in signal_samples for k in comps.keys()
+            ))
+            assets = np.array([s[0] for s in signal_samples])
+            y = np.array([s[2] for s in signal_samples])
+            X = np.zeros((len(signal_samples), len(all_signal_names)))
+            for i, (_, comps, _) in enumerate(signal_samples):
+                for j, name in enumerate(all_signal_names):
+                    val = comps.get(name, 0.0)
+                    X[i, j] = val if np.isfinite(val) else 0.0
+
+            unique_assets = sorted(set(assets))
+            print(f"  {len(signal_samples)} windows, {len(all_signal_names)} signals, "
+                  f"{int(y.sum())} crash / {int((1-y).sum())} non-crash")
+            print(f"  Assets: {', '.join(a.upper() for a in unique_assets)}")
+            print()
+
+            # ── Leave-one-asset-out cross-validation ──────────
+            print("  LEAVE-ONE-ASSET-OUT CROSS-VALIDATION:")
+            print("  (Train on 2 assets, test on the held-out asset)")
+            print()
+
+            cv_predictions = np.full(len(y), np.nan)
+            cv_probabilities = np.full(len(y), np.nan)
+
+            for held_out in unique_assets:
+                train_mask = assets != held_out
+                test_mask = assets == held_out
+
+                X_train, y_train = X[train_mask], y[train_mask]
+                X_test, y_test = X[test_mask], y[test_mask]
+
+                if y_train.sum() < 3 or (1 - y_train).sum() < 3:
+                    continue
+
+                scaler = StandardScaler()
+                X_train_s = scaler.fit_transform(X_train)
+                X_test_s = scaler.transform(X_test)
+
+                clf = LogisticRegression(
+                    solver="saga", C=1.0, l1_ratio=1.0,
+                    class_weight="balanced", max_iter=5000, random_state=42,
+                )
+                clf.fit(X_train_s, y_train)
+
+                probs = clf.predict_proba(X_test_s)[:, 1]
+                preds = (probs >= 0.5).astype(int)
+
+                cv_predictions[test_mask] = preds
+                cv_probabilities[test_mask] = probs
+
+                tp = int(((preds == 1) & (y_test == 1)).sum())
+                fp = int(((preds == 1) & (y_test == 0)).sum())
+                fn = int(((preds == 0) & (y_test == 1)).sum())
+                tn = int(((preds == 0) & (y_test == 0)).sum())
+                prec = tp / (tp + fp) if (tp + fp) > 0 else 0.0
+                rec = tp / (tp + fn) if (tp + fn) > 0 else 0.0
+                f1 = 2 * prec * rec / (prec + rec) if (prec + rec) > 0 else 0.0
+                print(f"  Held out {held_out.upper():<5}: "
+                      f"TP={tp:>2} FP={fp:>2} FN={fn:>2} TN={tn:>2}  "
+                      f"P={prec:>5.0%} R={rec:>5.0%} F1={f1:>5.0%}")
+
+            # Overall CV metrics
+            valid = ~np.isnan(cv_predictions)
+            if valid.sum() > 0:
+                cv_preds = cv_predictions[valid].astype(int)
+                cv_y = y[valid]
+                tp = int(((cv_preds == 1) & (cv_y == 1)).sum())
+                fp = int(((cv_preds == 1) & (cv_y == 0)).sum())
+                fn = int(((cv_preds == 0) & (cv_y == 1)).sum())
+                tn = int(((cv_preds == 0) & (cv_y == 0)).sum())
+                prec = tp / (tp + fp) if (tp + fp) > 0 else 0.0
+                rec = tp / (tp + fn) if (tp + fn) > 0 else 0.0
+                f1 = 2 * prec * rec / (prec + rec) if (prec + rec) > 0 else 0.0
+                print()
+                print(f"  OVERALL CV:      "
+                      f"TP={tp:>2} FP={fp:>2} FN={fn:>2} TN={tn:>2}  "
+                      f"P={prec:>5.0%} R={rec:>5.0%} F1={f1:>5.0%}")
+
+                lppls_f1 = metrics.get("lppls", {}).get("f1", 0)
+                handtuned_f1 = agg_metrics.get(0.5, {}).get("f1", 0) if agg_metrics else 0
+                print()
+                print(f"  Learned aggregator F1={f1:.0%} (out-of-sample)")
+                print(f"  Hand-tuned aggregator F1={handtuned_f1:.0%} (in-sample, threshold=0.5)")
+                print(f"  Best individual (LPPLS) F1={lppls_f1:.0%} (in-sample)")
+
+            # ── Fit on all data to show learned weights ──────
+            print()
+            print("  LEARNED WEIGHTS (fit on all data, for reference):")
+            scaler = StandardScaler()
+            X_s = scaler.fit_transform(X)
+            clf_full = LogisticRegression(
+                solver="saga", C=1.0, l1_ratio=1.0,
+                class_weight="balanced", max_iter=5000, random_state=42,
+            )
+            clf_full.fit(X_s, y)
+
+            coefs = clf_full.coef_[0]
+            # Sort by absolute weight
+            sorted_idx = np.argsort(-np.abs(coefs))
+            nonzero = [(all_signal_names[i], coefs[i]) for i in sorted_idx if abs(coefs[i]) > 0.01]
+            if nonzero:
+                print(f"  {'Signal':<25} {'Weight':>8}")
+                print("  " + "-" * 35)
+                for name, w in nonzero:
+                    direction = "+" if w > 0 else "-"
+                    print(f"  {name:<25} {direction}{abs(w):>7.3f}")
+                print()
+                zero_count = len(all_signal_names) - len(nonzero)
+                if zero_count > 0:
+                    print(f"  {zero_count} signals zeroed out by L1 regularization")
+            print()
+            print("  Note: positive weight = signal is predictive of crashes.")
+            print("  L1 penalty automatically drops uninformative signals.")
+        else:
+            print("  Insufficient signal samples for learned aggregator.")
+    except ImportError:
+        print("\n  (sklearn not available — skipping learned aggregator)")
+    except Exception as e:
+        print(f"\n  Learned aggregator failed: {e}")
+
+    # ══════════════════════════════════════════════
     # Part 1e: EXTENDED DATASET (FRED Forex + Options Backtester)
     # ══════════════════════════════════════════════
     ext_tp_records = []  # (method, detected)
@@ -691,6 +831,7 @@ def main():
     ext_agg_tp_probs = []
     ext_agg_fp_probs = []
     ext_pair_stats = []  # for summary
+    ext_signal_samples = []  # (source_name, components, label) for extended dataset
 
     # ── FRED Forex ────────────────────────────────
     fred_dir = Path("/Users/unbalancedparen/projects/forex-centuries/data/sources/fred/daily")
@@ -723,6 +864,7 @@ def main():
                 if comps:
                     agg_result = aggregate_signals(comps)
                     ext_agg_tp_probs.append(agg_result.probability)
+                    ext_signal_samples.append((pair_name, dict(comps), 1))
 
             non_crash = sample_non_crash_windows(df_fx, events, n_samples=20, seed=42)
             for nc in non_crash:
@@ -739,6 +881,7 @@ def main():
                 if comps:
                     agg_result = aggregate_signals(comps)
                     ext_agg_fp_probs.append(agg_result.probability)
+                    ext_signal_samples.append((pair_name, dict(comps), 0))
 
             ext_pair_stats.append({
                 "source": "FRED", "name": pair_name.replace("fred_", "").replace(".csv", "").upper(),
@@ -783,6 +926,7 @@ def main():
                 if comps:
                     agg_result = aggregate_signals(comps)
                     ext_agg_tp_probs.append(agg_result.probability)
+                    ext_signal_samples.append((fname, dict(comps), 1))
 
             non_crash = sample_non_crash_windows(df_opt, events, n_samples=10, seed=42)
             for nc in non_crash:
@@ -799,6 +943,7 @@ def main():
                 if comps:
                     agg_result = aggregate_signals(comps)
                     ext_agg_fp_probs.append(agg_result.probability)
+                    ext_signal_samples.append((fname, dict(comps), 0))
 
             ext_pair_stats.append({
                 "source": "OptsBT", "name": fname.replace("_stocks.csv", "").upper(),
@@ -901,7 +1046,76 @@ def main():
         print("\n  (No extended dataset found — FRED forex / options backtester dirs not available)")
 
     # ══════════════════════════════════════════════
-    # Part 1d: Recall by crash size (backward compat)
+    # Part 1f: LEARNED AGGREGATOR — train core, test extended
+    # ══════════════════════════════════════════════
+    if ext_signal_samples and signal_samples:
+        try:
+            from sklearn.linear_model import LogisticRegression
+            from sklearn.preprocessing import StandardScaler
+
+            print("\n" + "=" * 70)
+            print("LEARNED AGGREGATOR: TRAIN ON CORE → TEST ON EXTENDED (TRUE OOS)")
+            print("=" * 70)
+
+            # Use signal names from core
+            core_signal_names = sorted(set(
+                k for _, comps, _ in signal_samples for k in comps.keys()
+            ))
+
+            # Build core (train) matrix
+            y_train = np.array([s[2] for s in signal_samples])
+            X_train = np.zeros((len(signal_samples), len(core_signal_names)))
+            for i, (_, comps, _) in enumerate(signal_samples):
+                for j, name in enumerate(core_signal_names):
+                    val = comps.get(name, 0.0)
+                    X_train[i, j] = val if np.isfinite(val) else 0.0
+
+            # Build extended (test) matrix
+            y_test = np.array([s[2] for s in ext_signal_samples])
+            X_test = np.zeros((len(ext_signal_samples), len(core_signal_names)))
+            for i, (_, comps, _) in enumerate(ext_signal_samples):
+                for j, name in enumerate(core_signal_names):
+                    val = comps.get(name, 0.0)
+                    X_test[i, j] = val if np.isfinite(val) else 0.0
+
+            print(f"  Train: {len(signal_samples)} windows (BTC/SPY/Gold) — "
+                  f"{int(y_train.sum())} crash, {int((1-y_train).sum())} non-crash")
+            print(f"  Test:  {len(ext_signal_samples)} windows (FRED forex + OptsBT) — "
+                  f"{int(y_test.sum())} crash, {int((1-y_test).sum())} non-crash")
+            print()
+
+            scaler = StandardScaler()
+            X_train_s = scaler.fit_transform(X_train)
+            X_test_s = scaler.transform(X_test)
+
+            clf = LogisticRegression(
+                solver="saga", C=1.0, l1_ratio=1.0,
+                class_weight="balanced", max_iter=5000, random_state=42,
+            )
+            clf.fit(X_train_s, y_train)
+
+            probs = clf.predict_proba(X_test_s)[:, 1]
+
+            for thr_name, thr in [("0.3", 0.3), ("0.5", 0.5), ("0.7", 0.7)]:
+                preds = (probs >= thr).astype(int)
+                tp = int(((preds == 1) & (y_test == 1)).sum())
+                fp = int(((preds == 1) & (y_test == 0)).sum())
+                fn = int(((preds == 0) & (y_test == 1)).sum())
+                tn = int(((preds == 0) & (y_test == 0)).sum())
+                p = tp / (tp + fp) if (tp + fp) > 0 else 0.0
+                r = tp / (tp + fn) if (tp + fn) > 0 else 0.0
+                f = 2 * p * r / (p + r) if (p + r) > 0 else 0.0
+                print(f"  Threshold {thr_name}: TP={tp:>3} FP={fp:>3} FN={fn:>3} TN={tn:>3}  "
+                      f"P={p:>5.0%} R={r:>5.0%} F1={f:>5.0%}")
+
+            print()
+            print("  This is the strongest out-of-sample test: the model has NEVER seen")
+            print("  any forex pair or options series during training.")
+        except Exception as e:
+            print(f"\n  Train-core-test-extended failed: {e}")
+
+    # ══════════════════════════════════════════════
+    # Part 1g: Recall by crash size (backward compat)
     # ══════════════════════════════════════════════
     if len(rdf) > 0:
         print("\n" + "=" * 70)

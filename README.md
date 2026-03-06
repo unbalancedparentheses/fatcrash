@@ -311,7 +311,48 @@ Combines all methods via weighted average + category agreement bonus. When 3+ in
 | **0.5** | **HIGH+** | **36%** | **58%** | **44%** |
 | 0.7 | CRITICAL+ | 17% | 2% | 3% |
 
-At threshold 0.5, the aggregator achieves P=54%, R=56%, F1=55% on the core dataset. On the extended dataset it maintains F1=44% with P=36%, R=58%. The best individual method (LPPLS, F1=61%) still outperforms the ensemble on F1; the ensemble's advantage is balanced precision/recall rather than LPPLS's high-recall-low-precision profile.
+At threshold 0.5, the hand-tuned aggregator achieves P=57%, R=54%, F1=55% on the core dataset. On the extended dataset it maintains F1=44%. The best individual method (LPPLS, F1=61%) still outperforms the hand-tuned ensemble.
+
+### Learned aggregator (logistic regression)
+
+A logistic regression with L1 regularization learns which signals actually predict crashes and which add noise. Leave-one-asset-out cross-validation provides honest out-of-sample numbers.
+
+**Leave-one-asset-out CV (core dataset):**
+
+| Held out | TP | FP | FN | TN | Precision | Recall | F1 |
+|----------|:--:|:--:|:--:|:--:|:---------:|:------:|:--:|
+| BTC | 10 | 20 | 3 | 30 | 33% | 77% | 47% |
+| Gold | 7 | 12 | 7 | 38 | 37% | 50% | 42% |
+| SPY | 6 | 8 | 6 | 42 | 43% | 50% | 46% |
+| **Overall** | **23** | **40** | **16** | **110** | **37%** | **59%** | **45%** |
+
+**Train on core → test on extended (true out-of-sample):**
+
+Trained on BTC/SPY/Gold, tested on 23 FRED forex pairs + 6 options backtester series the model has never seen.
+
+| Threshold | TP | FP | FN | TN | Precision | Recall | F1 |
+|:---------:|:--:|:--:|:--:|:--:|:---------:|:------:|:--:|
+| 0.3 | 44 | 197 | 13 | 284 | 18% | 77% | 30% |
+| **0.5** | **29** | **107** | **28** | **374** | **21%** | **51%** | **30%** |
+| 0.7 | 15 | 49 | 42 | 432 | 23% | 26% | 25% |
+
+**Learned weights** (which signals matter, which hurt):
+
+| Signal | Weight | Direction |
+|--------|:------:|:---------:|
+| lppls_confidence | +0.72 | Predictive |
+| kappa_regime | +0.68 | Predictive |
+| gsadf_bubble | +0.52 | Predictive |
+| lppls_tc_proximity | +0.39 | Predictive |
+| amihud_spike | +0.35 | Predictive |
+| rv_spike | +0.25 | Predictive |
+| hamilton_stress | +0.10 | Weak |
+| maxsum_signal | -0.85 | Hurts ensemble |
+| hill_thinning | -0.75 | Hurts ensemble |
+| gpd_var_exceedance | -0.57 | Hurts ensemble |
+| hurst_trending | -0.56 | Hurts ensemble |
+
+L1 regularization zeroes out uninformative signals. Key insight: **tail methods with low precision (Hill, max-to-sum, GPD, Hurst) actively hurt the ensemble** because they fire too often on non-crash windows. The useful signals are bubble detectors (LPPLS, GSADF), distributional shape (kappa), and the new liquidity signal (Amihud).
 
 ### Why precision is low for tail/regime methods
 

@@ -40,6 +40,7 @@ deep = [
 fatcrash = "fatcrash.cli.main:app"
 
 [tool.maturin]
+manifest-path = "crates/fatcrash-py/Cargo.toml"
 python-source = "python"
 module-name = "fatcrash._core"
 features = ["pyo3/extension-module"]

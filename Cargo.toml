@@ -1,16 +1,8 @@
-[package]
-name = "fatcrash"
-version = "0.1.0"
-edition = "2021"
+[workspace]
+members = ["crates/*"]
+resolver = "2"
 
-[lib]
-name = "_core"
-path = "rust/src/lib.rs"
-crate-type = ["cdylib"]
-
-[dependencies]
-pyo3 = { version = "0.25", features = ["extension-module"] }
-numpy = "0.25"
+[workspace.dependencies]
 nalgebra = "0.33"
 rayon = "1.10"
 rand = "0.8"

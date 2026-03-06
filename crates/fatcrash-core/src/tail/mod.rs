@@ -1,0 +1,14 @@
+pub mod absorption;
+pub mod amihud;
+pub mod deh;
+pub mod dfa;
+pub mod hill;
+pub mod hurst;
+pub mod kappa;
+pub mod maxsum;
+pub mod momentum;
+pub mod pickands;
+pub mod qq;
+pub mod skewness;
+pub mod spectral;
+pub mod velocity;

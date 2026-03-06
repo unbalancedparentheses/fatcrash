@@ -57,3 +57,53 @@ term_premium = "NYFED:ACMTP"
 # Positioning/flows (placeholders)
 cot = "CFTC:COT_NET_SPEC"
 etf_flows = "ETF:NET_FLOWS"
+
+# ── TUI Monitor settings ────────────────────────────────
+
+[monitor]
+window = 120               # Rolling window size for pre-crash detection
+refresh_seconds = 300      # Auto-refresh interval (5 minutes)
+
+# Watchlist of assets to monitor
+# source: "yahoo" or "coingecko"
+# ticker: Yahoo Finance symbol or CoinGecko coin ID
+
+[[monitor.assets]]
+symbol = "BTC"
+source = "yahoo"
+ticker = "BTC-USD"
+
+[[monitor.assets]]
+symbol = "ETH"
+source = "yahoo"
+ticker = "ETH-USD"
+
+[[monitor.assets]]
+symbol = "SOL"
+source = "coingecko"
+ticker = "solana"
+
+[[monitor.assets]]
+symbol = "SPY"
+source = "yahoo"
+ticker = "SPY"
+
+[[monitor.assets]]
+symbol = "QQQ"
+source = "yahoo"
+ticker = "QQQ"
+
+[[monitor.assets]]
+symbol = "GOLD"
+source = "yahoo"
+ticker = "GC=F"
+
+[[monitor.assets]]
+symbol = "OIL"
+source = "yahoo"
+ticker = "CL=F"
+
+[[monitor.assets]]
+symbol = "DXY"
+source = "yahoo"
+ticker = "DX-Y.NYB"

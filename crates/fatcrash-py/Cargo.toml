@@ -1,0 +1,14 @@
+[package]
+name = "fatcrash-py"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "_core"
+crate-type = ["cdylib"]
+
+[dependencies]
+fatcrash-core = { path = "../fatcrash-core" }
+pyo3 = { version = "0.25", features = ["extension-module"] }
+numpy = "0.25"
+rayon = { workspace = true }

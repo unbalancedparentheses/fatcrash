@@ -52,9 +52,9 @@ pub fn compute_tripower_quarticity(returns: &[f64]) -> f64 {
 }
 
 /// Gamma(7/6) / Gamma(1/2) ~ Gamma(7/6) / sqrt(pi)
-/// Gamma(7/6) ~ 0.9407 (from tables)
+/// Gamma(7/6) = 0.92772 (Abramowitz & Stegun)
 fn gamma_ratio_7_6() -> f64 {
-    0.9407_f64 / std::f64::consts::PI.sqrt()
+    0.92772_f64 / std::f64::consts::PI.sqrt()
 }
 
 /// BNS jump test z-statistic.

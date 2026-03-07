@@ -136,11 +136,11 @@ pub fn gpd_var_es_slice(data: &[f64], p: f64, quantile: f64) -> Result<(f64, f64
     let (sigma, xi) = gpd_mle(&exceedances);
     let rate = n_exc / n; // N_u / n
 
-    // VaR: u + (sigma/xi) * [ ((1-p) * rate)^(-xi) - 1 ]
+    // VaR: u + (sigma/xi) * [ ((1-p) / rate)^(-xi) - 1 ]
     let var = if xi.abs() < 1e-8 {
-        threshold - sigma * (rate / (1.0 - p)).ln()
+        threshold + sigma * (rate / (1.0 - p)).ln()
     } else {
-        threshold + sigma / xi * (((1.0 - p) * rate).powf(-xi) - 1.0)
+        threshold + sigma / xi * (((1.0 - p) / rate).powf(-xi) - 1.0)
     };
 
     // ES: (VaR + sigma - xi*u) / (1 - xi)
@@ -173,9 +173,9 @@ mod tests {
         let rate = n_exc / n;
 
         let var = if xi.abs() < 1e-8 {
-            threshold - sigma * (rate / (1.0 - p)).ln()
+            threshold + sigma * (rate / (1.0 - p)).ln()
         } else {
-            threshold + sigma / xi * (((1.0 - p) * rate).powf(-xi) - 1.0)
+            threshold + sigma / xi * (((1.0 - p) / rate).powf(-xi) - 1.0)
         };
 
         let es = if xi.abs() < 1e-8 {

@@ -41,7 +41,7 @@ pub fn forward_filter(
     // Ergodic (stationary) starting probability
     let p01 = 1.0 - p00;
     let p10 = 1.0 - p11;
-    let mut prob_s1 = clip(p10 / (p01 + p10));
+    let mut prob_s1 = clip(p01 / (p01 + p10));
 
     for t in 0..n {
         // Predict: P(s_t=j | y_{1..t-1})
@@ -99,7 +99,7 @@ fn smooth_full(
     let mut filtered_s1 = vec![0.0; n];
     let mut predicted_s1 = vec![0.0; n];
 
-    let mut prob_s1 = clip(p10 / (p01 + p10));
+    let mut prob_s1 = clip(p01 / (p01 + p10));
 
     for t in 0..n {
         let pred_s0 = (1.0 - prob_s1) * p00 + prob_s1 * (1.0 - p11);

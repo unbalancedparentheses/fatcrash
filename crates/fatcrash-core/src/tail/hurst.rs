@@ -51,9 +51,9 @@ pub fn compute_hurst(data: &[f64]) -> f64 {
 
             let mean: f64 = window.iter().sum::<f64>() / size as f64;
 
-            // Standard deviation
+            // Sample standard deviation (Bessel's correction)
             let variance: f64 =
-                window.iter().map(|x| (x - mean).powi(2)).sum::<f64>() / size as f64;
+                window.iter().map(|x| (x - mean).powi(2)).sum::<f64>() / (size as f64 - 1.0);
             let std_dev = variance.sqrt();
 
             if std_dev < 1e-15 {

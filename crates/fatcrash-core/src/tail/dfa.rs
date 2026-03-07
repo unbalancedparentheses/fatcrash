@@ -25,7 +25,7 @@ pub fn compute_dfa(data: &[f64]) -> f64 {
         profile.push(running);
     }
 
-    // Generate window sizes: powers of 2 from 4 up to n/4
+    // Generate window sizes from 4 up to n/4 (factor 1.5 spacing)
     let mut sizes: Vec<usize> = Vec::new();
     let mut s = 4;
     while s <= n / 4 {
@@ -47,7 +47,7 @@ pub fn compute_dfa(data: &[f64]) -> f64 {
             continue;
         }
 
-        let mut rms_sum = 0.0;
+        let mut var_sum = 0.0;
         let mut valid = 0;
 
         for w in 0..n_windows {
@@ -75,24 +75,25 @@ pub fn compute_dfa(data: &[f64]) -> f64 {
             let slope = cov / var_x;
             let intercept = y_mean - slope * x_mean;
 
-            // RMS of detrended residuals
+            // Variance of detrended residuals per Peng et al. (1994)
             let mut sq_sum = 0.0;
             for (j, &y) in window.iter().enumerate() {
                 let trend = intercept + slope * j as f64;
                 sq_sum += (y - trend).powi(2);
             }
-            let rms = (sq_sum / s_f).sqrt();
-            if rms > 0.0 {
-                rms_sum += rms;
+            let box_var = sq_sum / s_f;
+            if box_var > 0.0 {
+                var_sum += box_var;
                 valid += 1;
             }
         }
 
         if valid > 0 {
-            let avg_rms = rms_sum / valid as f64;
-            if avg_rms > 0.0 {
+            // F(n) = sqrt(mean of per-box variances)
+            let f_n = (var_sum / valid as f64).sqrt();
+            if f_n > 0.0 {
                 log_s.push((size as f64).ln());
-                log_f.push(avg_rms.ln());
+                log_f.push(f_n.ln());
             }
         }
     }

@@ -1,5 +1,6 @@
 use rayon::prelude::*;
 
+use super::filter::{passes_filter, FilterConfig};
 use super::fitter::{search_lppls, SearchBounds};
 
 /// DS LPPLS confidence indicator for a single anchor date.
@@ -61,8 +62,12 @@ pub fn lppls_confidence_at(
             if let Some((params, _rss, _r2)) =
                 search_lppls(slice_t, slice_p, &bounds, pop_size, n_generations, seed)
             {
-                // search_lppls already filters, so any result here passes
-                tc_values.push(params.tc);
+                // Re-check filter since search_lppls falls back to unfiltered
+                let filter_config = FilterConfig::default();
+                let t_start = slice_t[0];
+                if passes_filter(&params, &filter_config, t_start, t_end) {
+                    tc_values.push(params.tc);
+                }
             }
         }
 

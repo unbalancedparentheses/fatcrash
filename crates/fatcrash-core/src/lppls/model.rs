@@ -57,13 +57,6 @@ pub fn solve_linear(
         return None;
     }
 
-    // Validate tc is beyond all time values
-    if tc <= *times.last().unwrap_or(&f64::INFINITY) {
-        // tc must be in the future (or at least at the end)
-        // Some implementations allow tc slightly before t_end, but
-        // we require tc > t_end for numerical stability of (tc-t)^m.
-    }
-
     // Build design matrix X = [1, f, g, h] where:
     //   f = (tc-t)^m
     //   g = (tc-t)^m * cos(w*ln(tc-t))

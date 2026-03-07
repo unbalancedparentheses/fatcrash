@@ -118,13 +118,16 @@ pub fn search_lppls(
 
         for _ in 0..lambda {
             let z = DVector::from_fn(n, |_, _| rng.sample::<f64, _>(StandardNormal));
-            let y = &bd * &z;
-            let mut x = &mean + sigma * &y;
+            let y_raw = &bd * &z;
+            let mut x = &mean + sigma * &y_raw;
 
             // Clip to bounds
             for i in 0..n {
                 x[i] = x[i].clamp(lo[i], hi[i]);
             }
+
+            // Recompute y after clipping so covariance update reflects actual steps
+            let y = (&x - &mean) / sigma;
 
             let tc = x[0];
             let m_val = x[1];
@@ -147,26 +150,24 @@ pub fn search_lppls(
                 // Track best filtered fit
                 if r2 >= MIN_R_SQUARED && passes_filter(&params, &filter_config, t_start, t_end)
                 {
-                    match &best_filtered {
-                        Some((_, prev_rss, _)) if rss < *prev_rss => {
-                            best_filtered = Some((params.clone(), rss, r2));
-                        }
-                        None => {
-                            best_filtered = Some((params.clone(), rss, r2));
-                        }
-                        _ => {}
+                    let improved = match &best_filtered {
+                        Some((_, prev_rss, _)) => rss < *prev_rss,
+                        None => true,
+                    };
+                    if improved {
+                        best_filtered = Some((params.clone(), rss, r2));
+                        stagnation = 0;
                     }
                 }
 
                 // Track best unfiltered fit
-                match &best_unfiltered {
-                    Some((_, prev_rss, _)) if rss < *prev_rss => {
-                        best_unfiltered = Some((params.clone(), rss, r2));
-                    }
-                    None => {
-                        best_unfiltered = Some((params.clone(), rss, r2));
-                    }
-                    _ => {}
+                let improved = match &best_unfiltered {
+                    Some((_, prev_rss, _)) => rss < *prev_rss,
+                    None => true,
+                };
+                if improved {
+                    best_unfiltered = Some((params.clone(), rss, r2));
+                    stagnation = 0;
                 }
 
                 candidates.push(Candidate { x, y, rss });

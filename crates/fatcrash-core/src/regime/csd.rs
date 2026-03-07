@@ -28,12 +28,11 @@ pub fn compute_rolling_variance(data: &[f64], window: usize) -> Vec<f64> {
 
     let mut result = vec![f64::NAN; n];
 
-    // Initialize with first window
+    // Initialize with first window (sample variance, Bessel's correction)
     let w = window as f64;
     let mut sum: f64 = data[..window].iter().sum();
     let mut sum_sq: f64 = data[..window].iter().map(|x| x * x).sum();
-    let mean = sum / w;
-    result[window - 1] = (sum_sq / w) - mean * mean;
+    result[window - 1] = ((sum_sq - sum * sum / w) / (w - 1.0)).max(0.0);
 
     // Slide window
     for i in window..n {
@@ -41,8 +40,7 @@ pub fn compute_rolling_variance(data: &[f64], window: usize) -> Vec<f64> {
         let new = data[i];
         sum += new - old;
         sum_sq += new * new - old * old;
-        let mean = sum / w;
-        let var = (sum_sq / w) - mean * mean;
+        let var = (sum_sq - sum * sum / w) / (w - 1.0);
         result[i] = var.max(0.0); // Clamp numerical noise
     }
 
@@ -169,13 +167,15 @@ mod tests {
 
     #[test]
     fn test_rolling_variance_known() {
-        // Alternating +/-1 -> variance = 1
+        // Alternating +/-1 -> sample variance = n/(n-1) * pop_var = 100/99 * 1 ≈ 1.0101
         let data: Vec<f64> = (0..200).map(|i| if i % 2 == 0 { 1.0 } else { -1.0 }).collect();
         let var = compute_rolling_variance(&data, 100);
         let v = var[199];
+        let expected = 100.0 / 99.0; // sample variance of +/-1 with w=100
         assert!(
-            (v - 1.0).abs() < 0.01,
-            "Alternating +/-1 should have variance ~1, got {}",
+            (v - expected).abs() < 0.02,
+            "Alternating +/-1 should have sample variance ~{}, got {}",
+            expected,
             v
         );
     }

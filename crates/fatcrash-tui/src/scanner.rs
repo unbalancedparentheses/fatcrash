@@ -257,7 +257,7 @@ pub fn scan_asset(
     // 14. Hamilton stress (2-state HMM) — uses fatcrash-core with parallel restarts
     let hamilton = safe_call(|| {
         let (_, _, _, _, _, _, filtered) =
-            fatcrash_core::regime::hamilton::hamilton_fit_slice(pre, Some(5));
+            fatcrash_core::regime::hamilton::hamilton_fit_slice(pre, None);
         // filtered contains P(stressed state) at each time step (state 1 = higher vol)
         filtered.last().copied().unwrap_or(f64::NAN)
     });
@@ -350,7 +350,7 @@ pub fn scan_asset(
     let gsadf_sig = safe_call(|| {
         let log_p: Vec<f64> = pre_prices.iter().filter_map(|p| if *p > 0.0 { Some(p.ln()) } else { None }).collect();
         let (stat, _, (_, cv95, _)) =
-            fatcrash_core::bubble::gsadf::gsadf_test_slice(&log_p, None, Some(100), Some(42));
+            fatcrash_core::bubble::gsadf::gsadf_test_slice(&log_p, None, Some(500), Some(42));
         gsadf_stat = stat;
         gsadf_cv = cv95;
         signals::gsadf_signal(stat, cv95)

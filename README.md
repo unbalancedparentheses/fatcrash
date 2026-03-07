@@ -71,7 +71,7 @@ Detects super-exponential growth and explosive dynamics. The strongest individua
 | M-LNN | Neural network LPPLS fitting (per-series) | tc, m, omega, confidence | 41% |
 | P-LNN | Pre-trained neural network (~700x faster) | tc, m, omega, confidence | 23% |
 
-**LPPLS** (Sornette, 2003). Models bubble dynamics as a power law with log-periodic oscillations: log(p(t)) = A + B|tc-t|^m + C|tc-t|^m * cos(omega*log|tc-t| + phi). The critical time tc is the predicted crash date. Confidence measured by fitting across many windows. Nonlinear optimization via CMA-ES in Rust.
+**LPPLS** (Sornette, 2003). Models bubble dynamics as a power law with log-periodic oscillations: log(p(t)) = A + B|tc-t|^m + C|tc-t|^m * cos(omega*log|tc-t| + phi). The critical time tc is the predicted crash date. Confidence measured by fitting across many windows. Nonlinear optimization via full CMA-ES (Hansen, 2001) with covariance matrix adaptation, evolution paths, and CSA step-size control. Sornette filter (2015 Shanghai paper, Table 1): m in [0.01, 0.99], omega in [6, 13], B < 0, damping D = m|B|/(omega|C|) >= 1.0, oscillations O >= 2.5.
 
 **M-LNN / P-LNN** (Nielsen, Sornette & Raissi, 2024). Neural network approaches to LPPLS fitting. Both predict nonlinear parameters (tc, m, omega), then solve linear parameters via OLS. M-LNN trains one small network per series (F1=41%). P-LNN is pre-trained on 100K synthetic series, ~700x faster (F1=23%). Requires `pip install fatcrash[deep]`.
 
@@ -89,7 +89,7 @@ Measures how fat the tails are — the shape of the distribution, not specific c
 | Max-stability kappa | Block-max concentration | kappa vs benchmark | 28% |
 | Max-to-Sum | Infinite variance diagnostic | ratio (> 0 if alpha < 2) | 18% |
 
-**Hill estimator** (Hill, 1975). alpha = [1/k * sum log(X_(i) / X_(k+1))]^(-1). The tail index governs tail decay: P(X > x) ~ x^(-alpha). Alpha < 2 means infinite variance; alpha < 4 means infinite kurtosis. Includes Huisman et al. (2001) small-sample bias correction.
+**Hill estimator** (Hill, 1975). alpha = [1/k * sum log(X_(i) / X_(k+1))]^(-1). The tail index governs tail decay: P(X > x) ~ x^(-alpha). Alpha < 2 means infinite variance; alpha < 4 means infinite kurtosis. Default k = sqrt(n) order statistics.
 
 **Pickands estimator** (Pickands, 1975). gamma = log((X_(k) - X_(2k)) / (X_(2k) - X_(4k))) / log(2). Valid for all three domains of attraction (Frechet, Gumbel, Weibull), unlike Hill which assumes heavy tails.
 
@@ -112,7 +112,7 @@ Directly models the distribution of extreme losses. Produces actionable risk num
 | GPD | Tail risk from exceedances | VaR, Expected Shortfall | 19% |
 | GEV | Block maxima classification | Frechet / Gumbel / Weibull | — |
 
-**GPD** (Balkema & de Haan, 1974). Fits exceedances over a threshold to the Generalized Pareto Distribution. Yields VaR and Expected Shortfall at arbitrary confidence levels.
+**GPD** (Balkema & de Haan, 1974; McNeil, Frey & Embrechts, 2005). Fits exceedances over a threshold to the Generalized Pareto Distribution via MLE with method-of-moments initialization. VaR and Expected Shortfall at arbitrary confidence levels using the standard POT formulas.
 
 **GEV** (Fisher & Tippett, 1928). Fits block maxima to the Generalized Extreme Value distribution. Classifies into Frechet (xi > 0, heavy tail), Gumbel (xi = 0, exponential), or Weibull (xi < 0, bounded).
 
@@ -132,7 +132,7 @@ Detects transitions in market dynamics — from calm to turbulent, mean-revertin
 
 **RV Spike.** Compares short-term realized variance to a long-term baseline: `ratio = RV_short / RV_long`. Runs multi-timeframe (fast: 7/21d, slow: 21/63d), taking the max signal. When ratio > 2x, volatility is spiking. F1=38%, 68% recall.
 
-**Hamilton Filter** (Hamilton, 1989). 2-state HMM with EM estimation and Kim smoother. Overall F1=37%, but **88% recall on major (>30%) crashes**. Backward-looking: it confirms you're in a crisis, it doesn't predict one.
+**Hamilton Filter** (Hamilton, 1989). 2-state Gaussian HMM with EM estimation (Baum-Welch), Kim (1994) smoother, and proper joint smoothed probabilities for transition M-step. 10 parallel random restarts to avoid local optima. State 1 is always the stressed (higher volatility) regime. Overall F1=37%, but **88% recall on major (>30%) crashes**. Backward-looking: it confirms you're in a crisis, it doesn't predict one.
 
 **Momentum** (Jegadeesh & Titman, 1993). Trailing log return over 3, 6, and 12-month windows. Momentum *reversal* — when long-term momentum is positive but short-term turns negative — is a crash precursor.
 
@@ -167,7 +167,7 @@ These 4 methods are disabled in crash detection by default (`--all-methods` to i
 
 **Spectral exponent** (Geweke & Porter-Hudak, 1983). Long-memory parameter d from the periodogram. Relation to Hurst: d = H - 0.5. Same problem: long memory is ubiquitous, not crash-specific.
 
-**GSADF** (Phillips, Shi & Yu, 2015). Explosive unit root detection. Theoretically elegant but LPPLS confidence subsumes it — both detect bubbles, LPPLS confidence gets F1=48% vs GSADF's 23%, and GSADF costs O(n^2) Monte Carlo simulations.
+**GSADF** (Phillips, Shi & Yu, 2015). Explosive unit root detection via Augmented Dickey-Fuller with BIC lag selection (p_max = floor(12*(T/100)^{1/4})). Monte Carlo critical values from 1000 simulations under driftless random walk null. Theoretically elegant but LPPLS confidence subsumes it — both detect bubbles, LPPLS confidence gets F1=48% vs GSADF's 23%, and GSADF costs O(n^2) Monte Carlo simulations.
 
 ### Additional Rust primitives
 
@@ -609,7 +609,7 @@ fatcrash-core (pure Rust)            fatcrash-py (PyO3)        fatcrash-tui (rat
 └────────────────────────────┘
 ```
 
-The TUI scanner has zero local algorithm implementations — every method call goes through fatcrash-core. All estimators and regime algorithms are in Rust. Computationally intensive methods (LPPLS CMA-ES, GSADF, confidence, Hamilton EM) use rayon for parallelization. NN methods are in Python (PyTorch).
+The TUI scanner has zero local algorithm implementations — every method call goes through fatcrash-core. All estimators and regime algorithms are in Rust, matching their reference papers: LPPLS uses full CMA-ES (Hansen 2001) with Sornette 2015 filter conditions, GSADF uses augmented Dickey-Fuller with BIC lag selection (PSY 2015), Hamilton uses proper Baum-Welch EM with joint smoothed probabilities (Hamilton 1989, Kim 1994), GPD uses standard POT methodology (McNeil et al. 2005). Computationally intensive methods use rayon for parallelization. NN methods are in Python (PyTorch).
 
 | Component | Language | Why |
 |-----------|----------|-----|

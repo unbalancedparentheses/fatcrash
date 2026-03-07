@@ -225,7 +225,11 @@ fn invert_symmetric(n: usize, a_flat: &[f64]) -> Option<Vec<f64>> {
     Some(inv)
 }
 
-/// BSADF sequence: for each r2, compute sup over r1 of ADF(data[r1..r2]).
+/// Backward SADF sequence.
+///
+/// For each endpoint `r2`, computes `sup_{r1} ADF(data[r1..r2])` over all
+/// start points `r1` that yield windows of at least `min_window` observations.
+/// Returns a vector of length `n` with NaN for indices below `min_window`.
 pub fn bsadf_sequence(data: &[f64], min_window: usize) -> Vec<f64> {
     let n = data.len();
     let mut bsadf = vec![f64::NAN; n];
@@ -253,8 +257,11 @@ pub fn bsadf_sequence(data: &[f64], min_window: usize) -> Vec<f64> {
     bsadf
 }
 
-/// Monte Carlo critical values under the null (random walk).
-/// Parallelized with rayon for speed.
+/// Monte Carlo critical values under the null (driftless random walk).
+///
+/// Simulates `n_sims` random walks of length `n`, computes the GSADF
+/// statistic for each, and returns the 90th, 95th, and 99th percentiles.
+/// Parallelized with rayon across simulations.
 pub fn monte_carlo_critical_values(
     n: usize,
     min_window: usize,
@@ -343,8 +350,11 @@ pub fn gsadf_test_slice(
     (gsadf, bsadf, cvs)
 }
 
-/// Rolling GSADF for bubble detection.
-/// Parallelized with rayon across time steps.
+/// Rolling GSADF for continuous bubble monitoring.
+///
+/// For each time step `t`, computes the GSADF statistic on the
+/// `data[t+1-window..=t]` sub-window. Parallelized with rayon
+/// across time steps. Returns NaN for indices below `window - 1`.
 pub fn gsadf_rolling_slice(
     data: &[f64],
     window: usize,

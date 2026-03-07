@@ -1,8 +1,12 @@
 /// Multi-timeframe signal aggregation.
-/// Resamples data at different frequencies (e.g. 1D, 3D, 7D)
-/// and checks if signals agree across scales.
-/// Compute agreement score across timeframes.
-/// Returns a value in [0, 1] where 1 = all scales agree.
+///
+/// Checks whether crash signals agree across different observation
+/// frequencies (1-day, 3-day, 7-day). Agreement is measured as the
+/// geometric mean of clamped \[0, 1\] signals, penalizing disagreement
+/// (e.g., one scale high while others are low).
+///
+/// Returns a vector of agreement scores in \[0, 1\] where 1 = all
+/// three scales agree on a high signal.
 pub fn multiscale_signals_slice(s1: &[f64], s3: &[f64], s7: &[f64]) -> Vec<f64> {
     let n = s1.len();
     let mut agreement = vec![f64::NAN; n];

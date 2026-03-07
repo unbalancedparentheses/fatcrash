@@ -1,10 +1,11 @@
-/// GEV distribution: F(x) = exp(-(1 + xi*(x-mu)/sigma)^(-1/xi))
-/// Parameters: mu (location), sigma (scale), xi (shape)
-///
-/// xi > 0: Frechet (fat tail)
-/// xi = 0: Gumbel (exponential tail)
-/// xi < 0: Weibull (bounded tail)
 /// GEV log-likelihood for a single observation.
+///
+/// The Generalized Extreme Value distribution:
+/// `H(x) = exp(-(1 + ξ(x-μ)/σ)^{-1/ξ})`
+///
+/// - `ξ > 0`: Fréchet (heavy tails, power-law decay)
+/// - `ξ = 0`: Gumbel (exponential tails)
+/// - `ξ < 0`: Weibull (bounded upper tail)
 pub fn gev_log_pdf(x: f64, mu: f64, sigma: f64, xi: f64) -> f64 {
     if sigma <= 0.0 {
         return f64::NEG_INFINITY;
@@ -24,8 +25,13 @@ pub fn gev_log_pdf(x: f64, mu: f64, sigma: f64, xi: f64) -> f64 {
     }
 }
 
-/// GEV MLE fitting via coordinate descent with adaptive step sizes.
-/// Returns (mu, sigma, xi).
+/// GEV MLE fitting via adaptive coordinate descent.
+///
+/// Initializes from method-of-moments (Gumbel approximation) and runs
+/// multi-resolution coordinate descent with step sizes proportional to
+/// parameter scale. Constrains `ξ ∈ (-0.5, 1.0)`.
+///
+/// Returns `(mu, sigma, xi)` — location, scale, shape.
 pub fn gev_fit_mle(data: &[f64]) -> (f64, f64, f64) {
     let n = data.len() as f64;
     let mean = data.iter().sum::<f64>() / n;

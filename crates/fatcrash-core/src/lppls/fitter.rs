@@ -9,11 +9,17 @@ const MIN_R_SQUARED: f64 = 0.80;
 
 /// Search bounds for the 3 nonlinear LPPLS parameters.
 pub struct SearchBounds {
+    /// Lower bound for critical time `tc`.
     pub tc_min: f64,
+    /// Upper bound for critical time `tc`.
     pub tc_max: f64,
+    /// Lower bound for power-law exponent `m` (typically 0.01).
     pub m_min: f64,
+    /// Upper bound for power-law exponent `m` (typically 0.99).
     pub m_max: f64,
+    /// Lower bound for log-periodic frequency `ω` (typically 6.0).
     pub omega_min: f64,
+    /// Upper bound for log-periodic frequency `ω` (typically 13.0).
     pub omega_max: f64,
 }
 

@@ -8,14 +8,22 @@ use nalgebra::{DMatrix, DVector};
 /// Nonlinear params: (tc, m, omega)
 /// Linear params solved via OLS: (A, B, C1, C2)
 
+/// Fitted LPPLS parameters.
 #[derive(Debug, Clone)]
 pub struct LpplsParams {
+    /// Critical time — predicted singularity (crash) date.
     pub tc: f64,
+    /// Power-law exponent. Valid bubble: `m ∈ [0.1, 0.9]`.
     pub m: f64,
+    /// Log-periodic angular frequency. Valid bubble: `ω ∈ [6, 13]`.
     pub omega: f64,
+    /// Intercept (log-price level at singularity).
     pub a: f64,
+    /// Power-law amplitude. `B < 0` required for super-exponential growth.
     pub b: f64,
+    /// Cosine component of the oscillation.
     pub c1: f64,
+    /// Sine component of the oscillation.
     pub c2: f64,
 }
 

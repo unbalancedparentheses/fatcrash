@@ -1,7 +1,11 @@
 use super::realized_var::compute_realized_variance;
 
-/// Bipower variation: BV = (pi/2) * (1/(W-1)) * sum(|r_i| * |r_{i-1}|)
-/// Robust to jumps -- converges to integrated variance even with jumps.
+/// Bipower variation (annualized).
+///
+/// `BV = (252 / (μ₁² · (W-1))) · Σ|r_i| · |r_{i-1}|`
+///
+/// where `μ₁ = √(2/π) ≈ 0.7979`. Robust to jumps — converges to
+/// integrated variance even in the presence of price discontinuities.
 pub fn compute_bipower_variation(returns: &[f64]) -> f64 {
     let w = returns.len();
     if w < 2 {
@@ -17,7 +21,9 @@ pub fn compute_bipower_variation(returns: &[f64]) -> f64 {
     (252.0 / (mu1 * mu1 * (w - 1) as f64)) * sum
 }
 
-/// Jump variance: JV = max(RV - BV, 0)
+/// Jump variance: `JV = max(RV - BV, 0)`.
+///
+/// Isolates the discontinuous (jump) component of total variance.
 pub fn compute_jump_variance(returns: &[f64]) -> f64 {
     let rv = compute_realized_variance(returns);
     let bv = compute_bipower_variation(returns);
@@ -27,8 +33,11 @@ pub fn compute_jump_variance(returns: &[f64]) -> f64 {
     (rv - bv).max(0.0)
 }
 
-/// Tri-power quarticity for BNS test denominator.
-/// TPQ = W * (252 / ((W-2) * mu_{4/3}^3)) * sum(|r_i|^{4/3} * |r_{i-1}|^{4/3} * |r_{i-2}|^{4/3})
+/// Tri-power quarticity for the BNS jump test denominator.
+///
+/// `TPQ = W · (252 / ((W-2) · μ_{4/3}³)) · Σ|r_i|^{4/3} · |r_{i-1}|^{4/3} · |r_{i-2}|^{4/3}`
+///
+/// where `μ_{4/3} = 2^{2/3} · Γ(7/6) / √π`. Requires at least 3 returns.
 pub fn compute_tripower_quarticity(returns: &[f64]) -> f64 {
     let w = returns.len();
     if w < 3 {
@@ -57,7 +66,11 @@ fn gamma_ratio_7_6() -> f64 {
     0.92772_f64 / std::f64::consts::PI.sqrt()
 }
 
-/// BNS jump test z-statistic.
+/// Barndorff-Nielsen & Shephard (2006) jump test z-statistic.
+///
+/// `z = (RV - BV) / (RV · √Vq)` where `Vq = (π²/4 + π - 5) · (1/n) · max(1, TPQ/BV²)`.
+///
+/// Large positive `z` rejects H₀ of no jumps. Returns `(z, jump_variance)`.
 pub fn compute_jump_test(returns: &[f64]) -> (f64, f64) {
     let rv = compute_realized_variance(returns);
     let bv = compute_bipower_variation(returns);

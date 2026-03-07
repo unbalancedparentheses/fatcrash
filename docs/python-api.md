@@ -54,11 +54,11 @@ Fetch key macro series (VIX, HY OAS, BBB OAS, yield curves, TED, BAA10Y, STLFSI)
 
 ### `log_returns(df, col="close") -> np.ndarray`
 
-Compute log returns: `ln(p_t / p_{t-1})`. Returns array of length `n-1`.
+Compute log returns: $\ln(p_t / p_{t-1})$. Returns array of length `n-1`.
 
 ### `log_prices(df, col="close") -> np.ndarray`
 
-Compute `log(price)` series. Same length as input.
+Compute $\ln(\text{price})$ series. Same length as input.
 
 ### `time_index(df) -> np.ndarray`
 
@@ -78,19 +78,19 @@ Compute block maxima of absolute returns for GEV fitting. Default `block_size=21
 
 ### `estimate_tail_index(returns, k=None) -> TailEstimate`
 
-Hill estimator for tail index alpha.
+Hill estimator for tail index $\alpha$.
 
 **Returns:** `TailEstimate(alpha: float, is_fat_tail: bool)`
 
-| alpha | Interpretation |
+| $\alpha$ | Interpretation |
 |:-----:|----------------|
-| < 2 | Infinite variance — VaR, Sharpe ratios are meaningless |
-| < 4 | Infinite kurtosis — CLT convergence is extremely slow |
-| > 4 | Finite kurtosis — standard risk metrics apply (but may still be fat-tailed) |
+| $< 2$ | Infinite variance — VaR, Sharpe ratios are meaningless |
+| $< 4$ | Infinite kurtosis — CLT convergence is extremely slow |
+| $> 4$ | Finite kurtosis — standard risk metrics apply (but may still be fat-tailed) |
 
 ### `rolling_tail_index(returns, window=252, k=None) -> np.ndarray`
 
-Rolling Hill alpha. Returns array of same length, NaN where insufficient data.
+Rolling Hill $\alpha$. Returns array of same length, NaN where insufficient data.
 
 ### `estimate_kappa(returns, n_subsamples=10) -> KappaEstimate`
 
@@ -110,11 +110,11 @@ MAD convergence rate. Measures how fast the sample mean converges.
 
 **Returns:** `TalebKappaEstimate(kappa: float, gaussian_benchmark: float, is_fat_tail: bool)`
 
-| kappa | Interpretation |
+| $\kappa$ | Interpretation |
 |:-----:|----------------|
-| ~0 | Gaussian — CLT operates normally |
-| ~0.5 | Very fat — CLT convergence extremely slow |
-| ~1.0 | Cauchy-like — sample mean does not converge |
+| $\approx 0$ | Gaussian — CLT operates normally |
+| $\approx 0.5$ | Very fat — CLT convergence extremely slow |
+| $\approx 1.0$ | Cauchy-like — sample mean does not converge |
 
 ### `rolling_taleb_kappa(returns, window=252, n0=30, n1=100) -> tuple[np.ndarray, float]`
 
@@ -126,11 +126,11 @@ Pickands extreme value index. Valid for all three domains of attraction.
 
 **Returns:** `PickandsEstimate(gamma: float, tail_type: str)`
 
-| gamma | tail_type | Interpretation |
+| $\gamma$ | tail_type | Interpretation |
 |:-----:|-----------|----------------|
-| > 0 | `"heavy"` | Frechet domain — power-law tails |
-| ~0 | `"light"` | Gumbel domain — exponential tails |
-| < 0 | `"bounded"` | Weibull domain — finite support |
+| $> 0$ | `"heavy"` | Fréchet domain — power-law tails |
+| $\approx 0$ | `"light"` | Gumbel domain — exponential tails |
+| $< 0$ | `"bounded"` | Weibull domain — finite support |
 
 ### `rolling_pickands(returns, window=252, k=None) -> np.ndarray`
 
@@ -140,11 +140,11 @@ Hurst exponent via R/S analysis.
 
 **Returns:** `HurstEstimate(h: float, regime: str)`
 
-| H | regime | Interpretation |
+| $H$ | regime | Interpretation |
 |:---:|--------|----------------|
-| > 0.5 | `"trending"` | Persistent dynamics — trends continue |
-| ~0.5 | `"random_walk"` | No memory |
-| < 0.5 | `"mean_reverting"` | Anti-persistent — mean reversion |
+| $> 0.5$ | `"trending"` | Persistent dynamics — trends continue |
+| $\approx 0.5$ | `"random_walk"` | No memory |
+| $< 0.5$ | `"mean_reverting"` | Anti-persistent — mean reversion |
 
 ### `rolling_hurst(data, window=252) -> np.ndarray`
 
@@ -154,11 +154,11 @@ Detrended Fluctuation Analysis exponent. Handles non-stationarity better than R/
 
 **Returns:** `DFAEstimate(alpha: float, regime: str)`
 
-| alpha | regime | Interpretation |
+| $\alpha$ | regime | Interpretation |
 |:-----:|--------|----------------|
-| > 0.5 | `"persistent"` | Long-range correlations |
-| ~0.5 | `"white_noise"` | Uncorrelated |
-| < 0.5 | `"anti_persistent"` | Anti-correlated |
+| $> 0.5$ | `"persistent"` | Long-range correlations |
+| $\approx 0.5$ | `"white_noise"` | Uncorrelated |
+| $< 0.5$ | `"anti_persistent"` | Anti-correlated |
 
 ### `rolling_dfa(data, window=252) -> np.ndarray`
 
@@ -184,7 +184,7 @@ Maximum-to-Sum ratio diagnostic.
 
 **Returns:** `MaxSumEstimate(ratio: float, is_infinite_variance: bool)`
 
-High ratio (> 0.05) suggests alpha < 2. The simplest diagnostic for whether variance exists.
+High ratio (> 0.05) suggests $\alpha < 2$. The simplest diagnostic for whether variance exists.
 
 ### `rolling_maxsum(data, window=252) -> np.ndarray`
 
@@ -194,11 +194,11 @@ GPH spectral exponent for long-memory detection.
 
 **Returns:** `SpectralEstimate(d: float, regime: str)`
 
-| d | regime | Interpretation |
+| $d$ | regime | Interpretation |
 |:---:|--------|----------------|
-| > 0 | `"long_memory"` | Shocks persist |
-| ~0 | `"short_memory"` | No long-range dependence |
-| < 0 | `"anti_persistent"` | Shocks dissipate |
+| $> 0$ | `"long_memory"` | Shocks persist |
+| $\approx 0$ | `"short_memory"` | No long-range dependence |
+| $< 0$ | `"anti_persistent"` | Shocks dissipate |
 
 ### `estimate_momentum(prices, lookback=252) -> MomentumEstimate`
 
@@ -224,7 +224,7 @@ Rate of change of realized volatility. Detects cascade dynamics.
 
 **Returns:** `VelocityEstimate(velocity: float, is_accelerating: bool)`
 
-`is_accelerating` is True when velocity > 1.0 (vol doubled).
+`is_accelerating` is True when velocity $> 1.0$ (vol doubled).
 
 ### `rolling_velocity(returns, vol_window=21, lag=5, window=252) -> np.ndarray`
 
@@ -238,7 +238,7 @@ Fit Generalized Pareto Distribution to the tail of the return distribution.
 
 **Returns:** `GPDResult(sigma: float, xi: float, threshold: float, n_exceedances: int)`
 
-`xi > 0` means heavy tails (Frechet domain). `xi = 0` means exponential tails. `xi < 0` means bounded support.
+$\xi > 0$ means heavy tails (Fréchet domain). $\xi = 0$ means exponential tails. $\xi < 0$ means bounded support.
 
 ### `fit_gev(block_maxima) -> GEVResult`
 
@@ -298,7 +298,7 @@ Fit Log-Periodic Power Law Singularity model.
 
 **Returns:** `LPPLSResult(tc, m, omega, a, b, c1, c2, rss, r2, is_bubble)`
 
-Sornette filter (`is_bubble`): `m in [0.1, 0.9]`, `omega in [6.0, 13.0]`, `B < 0`.
+Sornette filter (`is_bubble`): $m \in [0.1, 0.9]$, $\omega \in [6.0, 13.0]$, $B < 0$.
 
 | Field | Interpretation |
 |-------|----------------|
@@ -393,7 +393,7 @@ Assess risk of mechanical rebalancing given current regime.
 
 **Returns:** `RebalanceRiskResult(risk: float, dfa_component: float, momentum_component: float)`
 
-`risk` is [0, 1]. High risk when DFA detects trending (alpha > 0.5) AND momentum is negative — rebalancing buys into a continuing drawdown.
+`risk` is $[0, 1]$. High risk when DFA detects trending ($\alpha > 0.5$) AND momentum is negative — rebalancing buys into a continuing drawdown.
 
 ---
 
@@ -438,23 +438,23 @@ Dict mapping signal names to their default weights, informed by L1-regularized l
 
 | Indicator | Threshold | Meaning |
 |-----------|-----------|---------|
-| Hill alpha | < 2 | Infinite variance |
-| Hill alpha | < 4 | Infinite kurtosis |
-| Kappa | < benchmark | Fat tails (single extreme dominates) |
-| Taleb kappa | 0 | Gaussian |
-| Taleb kappa | 1 | Cauchy (CLT fails) |
-| Pickands gamma | > 0 | Heavy tails (Frechet) |
-| Pickands gamma | = 0 | Exponential tails (Gumbel) |
-| Pickands gamma | < 0 | Bounded support (Weibull) |
-| Hurst H | > 0.5 | Trending / persistent |
-| Hurst H | = 0.5 | Random walk |
-| Hurst H | < 0.5 | Mean-reverting |
-| DFA alpha | > 0.5 | Persistent / long-range correlations |
-| DFA alpha | = 0.5 | White noise |
-| LPPLS | m in [0.1, 0.9], omega in [6, 13], B < 0 | Valid bubble |
-| GSADF | stat > cv_95 | Explosive bubble (95% confidence) |
-| Hamilton | P(stressed) > 0.5 | Stress regime |
+| Hill $\alpha$ | $< 2$ | Infinite variance |
+| Hill $\alpha$ | $< 4$ | Infinite kurtosis |
+| Kappa | $< \text{benchmark}$ | Fat tails (single extreme dominates) |
+| Taleb $\kappa$ | $\approx 0$ | Gaussian |
+| Taleb $\kappa$ | $\approx 1$ | Cauchy (CLT fails) |
+| Pickands $\gamma$ | $> 0$ | Heavy tails (Fréchet) |
+| Pickands $\gamma$ | $= 0$ | Exponential tails (Gumbel) |
+| Pickands $\gamma$ | $< 0$ | Bounded support (Weibull) |
+| Hurst $H$ | $> 0.5$ | Trending / persistent |
+| Hurst $H$ | $= 0.5$ | Random walk |
+| Hurst $H$ | $< 0.5$ | Mean-reverting |
+| DFA $\alpha$ | $> 0.5$ | Persistent / long-range correlations |
+| DFA $\alpha$ | $= 0.5$ | White noise |
+| LPPLS | $m \in [0.1, 0.9]$, $\omega \in [6, 13]$, $B < 0$ | Valid bubble |
+| GSADF | stat $> cv_{95}$ | Explosive bubble (95% confidence) |
+| Hamilton | $P(\text{stressed}) > 0.5$ | Stress regime |
 | CSD | AR(1) + variance both rising | Approaching tipping point |
-| Crash signal | > 0.7 | CRITICAL |
-| Crash signal | > 0.5 | HIGH |
-| Crash signal | > 0.3 | ELEVATED |
+| Crash signal | $> 0.7$ | CRITICAL |
+| Crash signal | $> 0.5$ | HIGH |
+| Crash signal | $> 0.3$ | ELEVATED |

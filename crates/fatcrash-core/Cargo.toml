@@ -2,6 +2,9 @@
 name = "fatcrash-core"
 version = "0.1.0"
 edition = "2021"
+description = "Fat-tail crash detection: tail estimation, EVT, LPPLS bubbles, regime switching, and persistence analysis"
+license = "MIT"
+repository = "https://github.com/lambdaclass/fatcrash"
 
 [dependencies]
 nalgebra = { workspace = true }

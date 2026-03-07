@@ -68,7 +68,11 @@ pub fn forward_filter(
     filtered
 }
 
-/// Kim smoother: backward pass to get smoothed probabilities.
+/// Kim (1994) smoother: backward pass for smoothed state probabilities.
+///
+/// Computes `P(s_t = 1 | y_{1:T})` at each time step using the full
+/// sample of observations. More accurate than the forward filter alone
+/// since it incorporates future information.
 pub fn smooth(
     data: &[f64],
     mu: [f64; 2],
@@ -148,7 +152,11 @@ fn smooth_full(
     (smoothed, filtered_s1, predicted_s1)
 }
 
-/// EM estimation of 2-state HMM with a single random start.
+/// EM estimation of 2-state Gaussian HMM with a single random start.
+///
+/// Runs Baum-Welch EM (E-step: Kim smoother, M-step: weighted MLE)
+/// until log-likelihood converges within `EM_TOL` or `EM_MAX_ITER`
+/// iterations. Returns `(log_likelihood, mu, sigma, p00, p11, last_smoothed)`.
 pub fn em_single(data: &[f64], seed: u64) -> (f64, [f64; 2], [f64; 2], f64, f64, f64) {
     let n = data.len();
 

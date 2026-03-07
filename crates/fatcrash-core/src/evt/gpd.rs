@@ -1,9 +1,11 @@
-/// Generalized Pareto Distribution.
-/// F(x) = 1 - (1 + xi*x/sigma)^(-1/xi)  for xi != 0
-/// F(x) = 1 - exp(-x/sigma)               for xi = 0
-///
-/// Used for modeling exceedances over a threshold.
 /// GPD log-likelihood for a single exceedance.
+///
+/// The Generalized Pareto Distribution models exceedances over a threshold:
+///
+/// - `G(y) = 1 - (1 + ξy/σ)^{-1/ξ}` when `ξ ≠ 0`
+/// - `G(y) = 1 - exp(-y/σ)` when `ξ = 0`
+///
+/// Returns `-∞` for invalid inputs (σ ≤ 0, x < 0, or support violation).
 pub fn gpd_log_pdf(x: f64, sigma: f64, xi: f64) -> f64 {
     if sigma <= 0.0 || x < 0.0 {
         return f64::NEG_INFINITY;
@@ -20,6 +22,10 @@ pub fn gpd_log_pdf(x: f64, sigma: f64, xi: f64) -> f64 {
 }
 
 /// GPD MLE fitting via data-scaled coordinate descent.
+///
+/// Initializes with method-of-moments estimates: `ξ_mom = 0.5(1 - μ²/σ²)`,
+/// `σ_mom = μ(1 - ξ_mom)`. Then runs multi-resolution coordinate descent
+/// with 5 step-size levels scaled to the data mean.
 pub fn gpd_mle(exceedances: &[f64]) -> (f64, f64) {
     let n = exceedances.len() as f64;
     let mean = exceedances.iter().sum::<f64>() / n;
@@ -78,6 +84,9 @@ pub fn gpd_mle(exceedances: &[f64]) -> (f64, f64) {
 }
 
 /// Select threshold via linear interpolation at the given quantile.
+///
+/// Sorts data and returns the linearly interpolated value at the specified
+/// quantile (e.g., 0.95 for the 95th percentile).
 pub fn select_threshold(data: &[f64], quantile: f64) -> f64 {
     let mut sorted = data.to_vec();
     sorted.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
@@ -93,7 +102,11 @@ pub fn select_threshold(data: &[f64], quantile: f64) -> f64 {
 }
 
 /// Fit GPD to exceedances over threshold.
-/// Returns (sigma, xi, threshold, n_exceedances).
+///
+/// Negates returns to get losses, selects a threshold at the given quantile,
+/// extracts exceedances, and fits via MLE. Requires at least 10 exceedances.
+///
+/// Returns `(sigma, xi, threshold, n_exceedances)`.
 pub fn gpd_fit_slice(data: &[f64], quantile: f64) -> Result<(f64, f64, f64, usize), String> {
     let losses: Vec<f64> = data.iter().map(|x| -x).filter(|x| *x > 0.0).collect();
     let threshold = select_threshold(&losses, quantile);
@@ -112,11 +125,14 @@ pub fn gpd_fit_slice(data: &[f64], quantile: f64) -> Result<(f64, f64, f64, usiz
 }
 
 /// Compute VaR and Expected Shortfall from fitted GPD.
-/// `p` is the probability level (e.g. 0.99 for 99% VaR).
-/// Returns (VaR, ES).
 ///
-/// VaR_p = u + (sigma/xi) * [ (n/(N_u*(1-p)))^xi - 1 ]
-/// ES_p  = VaR_p / (1-xi) + (sigma - xi*u) / (1-xi)
+/// `p` is the confidence level (e.g., 0.99 for 99% VaR).
+///
+/// `VaR_p = u + (σ/ξ) · [((1-p)/rate)^{-ξ} - 1]`
+///
+/// `ES_p = (VaR_p + σ - ξ·u) / (1 - ξ)` for `ξ < 1`
+///
+/// Returns `(VaR, ES)`. ES is infinite when `ξ ≥ 1`.
 pub fn gpd_var_es_slice(data: &[f64], p: f64, quantile: f64) -> Result<(f64, f64), String> {
     let losses: Vec<f64> = data.iter().map(|x| -x).filter(|x| *x > 0.0).collect();
     let n = losses.len() as f64;

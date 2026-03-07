@@ -1,4 +1,8 @@
-/// Simple realized variance: RV = (252/W) * sum(r_i^2)
+/// Annualized realized variance from daily returns.
+///
+/// `RV = (252/W) · Σ r_i²`
+///
+/// Assumes 252 trading days per year.
 pub fn compute_realized_variance(returns: &[f64]) -> f64 {
     let w = returns.len();
     if w == 0 {
@@ -8,8 +12,11 @@ pub fn compute_realized_variance(returns: &[f64]) -> f64 {
     (252.0 / w as f64) * sum_sq
 }
 
-/// Parkinson realized variance from high/low prices.
-/// RV_Park = (252 / (4 * ln2 * W)) * sum((ln(H_i / L_i))^2)
+/// Parkinson (1980) realized variance from high/low prices.
+///
+/// `RV_Park = (252 / (4·ln2·W)) · Σ (ln(H_i/L_i))²`
+///
+/// Approximately 5× more efficient than simple RV.
 pub fn compute_realized_variance_parkinson(high: &[f64], low: &[f64]) -> f64 {
     let w = high.len();
     if w == 0 || low.len() != w {
@@ -32,9 +39,13 @@ pub fn compute_realized_variance_parkinson(high: &[f64], low: &[f64]) -> f64 {
     (252.0 / (4.0 * 2.0_f64.ln() * w as f64)) * sum
 }
 
-/// Garman-Klass realized variance from OHLC.
-/// GK_i = 0.5 * (ln(H/L))^2 - (2*ln2 - 1) * (ln(C/O))^2
-/// RV_GK = (252 / W) * sum(GK_i)
+/// Garman-Klass (1980) realized variance from OHLC data.
+///
+/// `GK_i = 0.5·(ln(H/L))² - (2·ln2 - 1)·(ln(C/O))²`
+///
+/// `RV_GK = (252/W) · Σ GK_i`
+///
+/// The most efficient estimator from daily OHLC bars.
 pub fn compute_realized_variance_gk(
     open: &[f64],
     high: &[f64],

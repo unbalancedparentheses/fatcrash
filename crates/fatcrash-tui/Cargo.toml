@@ -2,6 +2,9 @@
 name = "fatcrash-tui"
 version = "0.1.0"
 edition = "2021"
+description = "Terminal UI dashboard for fatcrash crash detection signals"
+license = "MIT"
+repository = "https://github.com/lambdaclass/fatcrash"
 
 [[bin]]
 name = "fatcrash-tui"

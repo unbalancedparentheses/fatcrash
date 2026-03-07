@@ -1,7 +1,9 @@
 use crate::utils::ols_slope;
 
-/// Rolling AR(1) coefficient: fit x_t = alpha + beta*x_{t-1} via OLS.
-/// Returns beta for each window position.
+/// Rolling AR(1) coefficient via OLS: `x_t = α + β·x_{t-1}`.
+///
+/// Returns `β` for each window position. When `β → 1`, the system is
+/// losing resilience (critical slowing down). Requires `window ≥ 3`.
 pub fn compute_rolling_ar1(data: &[f64], window: usize) -> Vec<f64> {
     let n = data.len();
     if window < 3 || window > n {
@@ -19,7 +21,10 @@ pub fn compute_rolling_ar1(data: &[f64], window: usize) -> Vec<f64> {
     result
 }
 
-/// Rolling variance using Welford's online algorithm.
+/// Rolling sample variance using a sliding-window accumulator.
+///
+/// Uses Bessel's correction (divides by `w - 1`). Rising variance
+/// is an early-warning signal for critical transitions.
 pub fn compute_rolling_variance(data: &[f64], window: usize) -> Vec<f64> {
     let n = data.len();
     if window < 2 || window > n {
@@ -47,7 +52,9 @@ pub fn compute_rolling_variance(data: &[f64], window: usize) -> Vec<f64> {
     result
 }
 
-/// Rate of change: (x[t] - x[t-lag]) / |x[t-lag]|
+/// Rate of change: `(x[t] - x[t-lag]) / |x[t-lag]|`.
+///
+/// Skips entries where the denominator is near zero or NaN.
 pub fn rate_of_change(series: &[f64], lag: usize) -> Vec<f64> {
     let n = series.len();
     let mut result = vec![f64::NAN; n];

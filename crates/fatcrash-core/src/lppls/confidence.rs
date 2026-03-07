@@ -102,12 +102,15 @@ pub fn lppls_confidence_at(
 }
 
 /// Compute LPPLS confidence for each time step.
-/// Uses rayon for parallel computation across time points.
 ///
-/// Returns three vectors (confidence, tc_mean, tc_std) for each time step.
-/// confidence[t] = fraction of (t1, t2=t) windows producing qualifying fits.
-/// tc_mean[t] = mean tc from passing fits (NaN if none pass).
-/// tc_std[t] = std of tc from passing fits (NaN if < 2 pass).
+/// For each anchor date `t2`, fits LPPLS across a grid of sub-windows
+/// `(t1, t2)` and reports the fraction that pass the Sornette filter
+/// with R² ≥ 0.80. Parallelized across time points with [`rayon`].
+///
+/// Returns three vectors `(confidence, tc_mean, tc_std)`:
+/// - `confidence[t]` — fraction of qualifying fits (0.0 to 1.0).
+/// - `tc_mean[t]` — mean critical time from passing fits (NaN if none).
+/// - `tc_std[t]` — std of critical time (NaN if fewer than 2 pass).
 pub fn lppls_confidence_slice(
     times: &[f64],
     log_prices: &[f64],

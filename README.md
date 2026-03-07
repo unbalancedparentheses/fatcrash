@@ -4,7 +4,7 @@
 
 The median tail index across 138 countries is alpha = 1.57. Standard risk models assume finite variance (alpha > 2) and often finite kurtosis (alpha > 4). For the majority of the world's currencies, these assumptions are empirically false. fatcrash detects crashes by measuring what actually matters: the tail.
 
-Python + Rust (PyO3). 18 crash detection methods across 5 families + 7 market regime signal families. 500 years of data.
+Python + Rust (PyO3). 18 crash detection methods across 5 families (14 enabled by default, 4 disabled) + 7 market regime signal families. Tested at 3 window sizes (30d, 60d, 120d) across 37+ assets — crypto, equities, 23 forex pairs, 13 futures, and LBMA gold/silver (1968-2025).
 
 ```python
 from fatcrash.data.ingest import from_sample
@@ -28,6 +28,10 @@ spectral_exponent(ret)   # 0.04 — weak long memory
 ```bash
 fatcrash detect --asset BTC --source sample
 fatcrash backtest --asset BTC --start 2017-01-01 --end 2018-06-01
+
+# Native Rust TUI — real-time monitoring of 31 assets
+cargo run -p fatcrash-tui -- monitor
+cargo run -p fatcrash-tui -- monitor --json --no-cache
 ```
 
 > **DISCLAIMER:** This software is for academic research and educational purposes only. It does not constitute financial advice. No warranty is provided regarding the accuracy of predictions. Do not use for investment decisions.
@@ -54,7 +58,7 @@ VaR under normality, Sharpe ratios, CAPM betas, mean-variance optimization — a
 
 ## Methods
 
-18 methods organized into 5 families. Each family detects a different type of signal — the aggregator combines them and rewards cross-family agreement.
+18 methods organized into 5 families. 14 are enabled by default; 4 are disabled by default due to low F1 in crash detection (enable with `--all-methods`). Each family detects a different type of signal — the aggregator combines them and rewards cross-family agreement.
 
 ### Family 1: Bubble Detection
 
@@ -63,14 +67,11 @@ Detects super-exponential growth and explosive dynamics. The strongest individua
 | Method | What it measures | Key output | F1 |
 |--------|-----------------|------------|:--:|
 | LPPLS | Log-periodic power law bubble shape | Critical time tc, confidence | 61% |
-| LPPLS confidence | Multi-window LPPLS robustness | Confidence [0,1] | 47% |
-| GSADF | Explosive unit root (Phillips-Shi-Yu) | Test statistic vs CV | 38% |
+| LPPLS confidence | Multi-window, multi-timeframe LPPLS | Confidence [0,1] | 48% |
 | M-LNN | Neural network LPPLS fitting (per-series) | tc, m, omega, confidence | 41% |
 | P-LNN | Pre-trained neural network (~700x faster) | tc, m, omega, confidence | 23% |
 
 **LPPLS** (Sornette, 2003). Models bubble dynamics as a power law with log-periodic oscillations: log(p(t)) = A + B|tc-t|^m + C|tc-t|^m * cos(omega*log|tc-t| + phi). The critical time tc is the predicted crash date. Confidence measured by fitting across many windows. Nonlinear optimization via CMA-ES in Rust.
-
-**GSADF** (Phillips, Shi & Yu, 2015). Detects explosive unit root behavior — the econometric signature of bubbles. The supremum of recursive ADF statistics over all feasible subsamples, with Monte Carlo critical values. Complements LPPLS: LPPLS detects bubble *shape*, GSADF detects *explosive growth*.
 
 **M-LNN / P-LNN** (Nielsen, Sornette & Raissi, 2024). Neural network approaches to LPPLS fitting. Both predict nonlinear parameters (tc, m, omega), then solve linear parameters via OLS. M-LNN trains one small network per series (F1=41%). P-LNN is pre-trained on 100K synthetic series, ~700x faster (F1=23%). Requires `pip install fatcrash[deep]`.
 
@@ -85,7 +86,7 @@ Measures how fat the tails are — the shape of the distribution, not specific c
 | DEH | Tail index via moment estimator | gamma (> 0 = heavy tail) | 26% |
 | QQ | Tail index from QQ-plot slope | alpha (< 4 = fat tail) | 23% |
 | Taleb kappa | CLT convergence rate | kappa (0 = Gaussian, 1 = Cauchy) | 25% |
-| Max-stability kappa | Block-max concentration | kappa vs benchmark | 27% |
+| Max-stability kappa | Block-max concentration | kappa vs benchmark | 28% |
 | Max-to-Sum | Infinite variance diagnostic | ratio (> 0 if alpha < 2) | 18% |
 
 **Hill estimator** (Hill, 1975). alpha = [1/k * sum log(X_(i) / X_(k+1))]^(-1). The tail index governs tail decay: P(X > x) ~ x^(-alpha). Alpha < 2 means infinite variance; alpha < 4 means infinite kurtosis. Includes Huisman et al. (2001) small-sample bias correction.
@@ -121,26 +122,17 @@ Detects transitions in market dynamics — from calm to turbulent, mean-revertin
 
 | Method | What it measures | Key output | F1 |
 |--------|-----------------|------------|:--:|
-| DFA | Persistence, non-stationary-robust | alpha (> 0.5 = trending) | 34% |
-| CSD on volatility | Tipping point detection | AR(1) + variance rising | 34% |
-| RV spike | Short-term vol vs baseline | ratio (> 2x = regime change) | 32% |
-| Hamilton filter | 2-state HMM regime classification | P(stressed) | 29% |
-| Hurst | Persistence via R/S analysis | H (> 0.5 = trending) | 28% |
-| Spectral | Long memory from frequency domain | d (> 0 = long memory) | 25% |
+| CSD on volatility | Tipping point detection | AR(1) + variance rising | 42% |
+| RV spike | Short-term vol vs baseline | ratio (> 2x = regime change) | 38% |
+| Hamilton filter | 2-state HMM regime classification | P(stressed) | 37% |
 | Momentum reversal | Trend breakdown detection | reversal signal | — |
 | Price velocity | Volatility acceleration | velocity (cascade detection) | — |
 
-**DFA** (Peng et al., 1994). Detrended fluctuation analysis: divides into windows, removes linear trend, regresses log(RMS of residuals) vs log(window size). Handles non-stationarity better than R/S — best non-bubble crash detector (82% recall, 34% F1).
+**Critical Slowing Down** (Scheffer et al., 2009). Near a tipping point, systems recover more slowly. Observable: rising AR(1) coefficient AND rising variance simultaneously. Applied to the *volatility* series (rolling RV), not raw returns — raw returns have near-zero autocorrelation. Volatility has strong clustering, so CSD on the vol series detects genuine regime transitions. F1=42%, 50% recall.
 
-**Critical Slowing Down** (Scheffer et al., 2009). Near a tipping point, systems recover more slowly. Observable: rising AR(1) coefficient AND rising variance simultaneously. Applied to the *volatility* series (rolling RV), not raw returns — raw returns have near-zero autocorrelation. Volatility has strong clustering, so CSD on the vol series detects genuine regime transitions. F1=34%, 51% recall.
+**RV Spike.** Compares short-term realized variance to a long-term baseline: `ratio = RV_short / RV_long`. Runs multi-timeframe (fast: 7/21d, slow: 21/63d), taking the max signal. When ratio > 2x, volatility is spiking. F1=38%, 68% recall.
 
-**RV Spike.** Compares short-term realized variance (21-day) to a long-term baseline (126-day): `ratio = RV_short / RV_long`. When ratio > 2x, volatility is spiking. More robust than BNS JV/RV fraction at daily frequency. F1=32%.
-
-**Hamilton Filter** (Hamilton, 1989). 2-state HMM with EM estimation and Kim smoother. Overall F1=29%, but **88% recall on major (>30%) crashes**. Backward-looking: it confirms you're in a crisis, it doesn't predict one.
-
-**Hurst exponent** (Hurst, 1951). Persistence via rescaled range (R/S) analysis. H = 0.5 is a random walk; H > 0.5 means trends persist; H < 0.5 means mean-reversion.
-
-**Spectral exponent** (Geweke & Porter-Hudak, 1983). Estimates long-memory parameter d from the periodogram near frequency zero. Relation to Hurst: d = H - 0.5. Confirms persistence from the frequency domain.
+**Hamilton Filter** (Hamilton, 1989). 2-state HMM with EM estimation and Kim smoother. Overall F1=37%, but **88% recall on major (>30%) crashes**. Backward-looking: it confirms you're in a crisis, it doesn't predict one.
 
 **Momentum** (Jegadeesh & Titman, 1993). Trailing log return over 3, 6, and 12-month windows. Momentum *reversal* — when long-term momentum is positive but short-term turns negative — is a crash precursor.
 
@@ -158,6 +150,25 @@ Volume-based signals that detect liquidity dry-ups. Brings a dimension no price-
 
 **Amihud illiquidity** (Amihud, 2002). mean(|return| / volume) over a rolling window. Higher values = less liquid = harder to trade without moving price. Illiquidity spikes precede and accompany crashes because market makers widen spreads and pull quotes. The only method in fatcrash that uses volume data. F1=32%, with 71% recall on small (<15%) crashes — catches liquidity dry-ups that price-only methods miss.
 
+### Methods disabled by default
+
+These 4 methods are disabled in crash detection by default (`--all-methods` to include them). They're still available as `_core` estimators and are used in the FRED forex and Clio Infra analysis sections. Disabled after testing across 406 crash windows at 3 window sizes — they add noise without improving the ensemble.
+
+| Method | Why removed | Core F1 | Combined F1 | Notes |
+|--------|------------|:-------:|:-----------:|-------|
+| **DFA** | Overfires on forex/futures | 34% | 17% | 82% recall on BTC/SPY/Gold but fires on everything else. CSD captures regime shifts better. |
+| **Hurst** | Redundant, poor everywhere | 28% | 19% | Redundant with DFA (which we also removed). R/S analysis is dominated by DFA and CSD. |
+| **Spectral** | Weakest method | 25% | 13% | Long-memory detection from the frequency domain. Confirms persistence but doesn't predict crashes. |
+| **GSADF** | Flat 23%, expensive | 38% | 23% | O(n^2) computation, constant F1=23% across all windows. LPPLS confidence captures bubble detection better. |
+
+**DFA** (Peng et al., 1994). Detrended fluctuation analysis. Handles non-stationarity better than R/S Hurst — 82% recall on BTC/SPY/Gold. But on the extended dataset (forex, futures, commodities), it overfires catastrophically (F1 drops to 13%). Persistence is the norm in financial data, not a crash signal.
+
+**Hurst exponent** (Hurst, 1951). Persistence via rescaled range (R/S) analysis. H > 0.5 means trends persist. 19% F1 everywhere — financial data is always persistent, so this never distinguishes crash from non-crash.
+
+**Spectral exponent** (Geweke & Porter-Hudak, 1983). Long-memory parameter d from the periodogram. Relation to Hurst: d = H - 0.5. Same problem: long memory is ubiquitous, not crash-specific.
+
+**GSADF** (Phillips, Shi & Yu, 2015). Explosive unit root detection. Theoretically elegant but LPPLS confidence subsumes it — both detect bubbles, LPPLS confidence gets F1=48% vs GSADF's 23%, and GSADF costs O(n^2) Monte Carlo simulations.
+
 ### Additional Rust primitives
 
 The Rust layer also exposes **realized skewness** (rolling third moment / std^3, captures distributional asymmetry) and **absorption ratio** (fraction of variance in top eigenvector of cross-asset correlation matrix, measures systemic coupling). Both are available as `_core` functions but not included in the aggregator — realized skewness overlaps with tail estimators (F1=30% core, drops to 19% extended), and absorption ratio requires multi-asset alignment at test time (F1=29%).
@@ -170,13 +181,13 @@ Position sizing via inverse volatility targeting: weight = target_vol / realized
 
 ## Signal Aggregation
 
-Methods grouped into 5 independent families (matching the method categories above). When 3+ families have elevated signals, probability gets a +15% bonus.
+Methods grouped into 5 independent families (matching the method categories above). Key methods run multi-timeframe (LPPLS confidence on 60/90/120d, kappa on 30/60/full, RV spike on 7/21 and 21/63d), taking the max signal across scales. Weights informed by L1-regularized logistic regression: methods with negative learned weights (Hill, max-to-sum, GPD) are zeroed out. When 3+ families have elevated signals, probability gets a +15% bonus.
 
 | Family | Methods | What it detects |
 |--------|---------|-----------------|
-| **Bubble** | LPPLS, GSADF, M-LNN, P-LNN | Super-exponential growth, explosive unit roots |
+| **Bubble** | LPPLS, M-LNN, P-LNN | Super-exponential growth |
 | **Tail** | Hill, Pickands, DEH, QQ, Taleb Kappa, Max-Stability Kappa, Max-to-Sum, GPD | Tail thickening, distributional regime shifts |
-| **Regime** | Hurst, DFA, Spectral, Momentum reversal, CSD (on vol), Hamilton | Persistence shifts, tipping points, regime transitions |
+| **Regime** | Momentum reversal, CSD (on vol), Hamilton | Tipping points, regime transitions |
 | **Structure** | Multiscale, LPPLS tc proximity, Price velocity, RV spike | Cross-timeframe agreement, timing, cascade detection |
 | **Liquidity** | Amihud illiquidity | Volume-based liquidity dry-ups |
 
@@ -186,89 +197,97 @@ Indicators are also computed at daily, 3-day, and weekly frequencies. A signal a
 
 ### Crash detection: precision, recall, and F1
 
-All accuracy numbers are in-sample on historical data. Methods are tested on both crash windows (120 days before a drawdown peak) and non-crash windows (random 120-day stretches at least 180 days from any crash).
+All accuracy numbers are in-sample on historical data. Methods are tested at three window sizes (30, 60, 120 days before a drawdown peak) against non-crash windows of matching length. Results below use the 120-day window; shorter windows show which methods degrade gracefully and which require long history.
+
+#### Multi-window comparison
+
+Tested at 30, 60, and 120-day pre-crash windows. 406 crash windows across 37+ assets (crypto, equities, 23 forex pairs, 13 futures, LBMA gold/silver spanning 1968-2025). Combined F1 scores:
+
+| Method | 30d | 60d | 120d |
+|--------|:---:|:---:|:----:|
+| **LPPLS confidence** | **50%** | **47%** | **48%** |
+| Kappa | 39% | 43% | 44% |
+| CSD (on vol) | -- | -- | 42% |
+| Amihud | 38% | 37% | 42% |
+| Pickands | 35% | 32% | 42% |
+| QQ | **41%** | 40% | 32% |
+| DEH | 39% | 39% | 41% |
+| RV spike | 36% | 34% | 38% |
+| Max-to-Sum | **38%** | 37% | 27% |
+| Hill | **37%** | 37% | 29% |
+| Hamilton | -- | -- | 37% |
+| LPPLS | 32% | 34% | 36% |
+| GPD VaR | -- | -- | 35% |
+| Taleb Kappa | -- | 25% | 34% |
+
+**LPPLS confidence is #1 at every window size.** Three methods are *better* at short windows: QQ (41%→32%), Max-to-Sum (38%→27%), and Hill (37%→29%) — order-statistic estimators detect distributional shifts more sharply with recent data; the signal dilutes with longer history. DEH is remarkably stable (39%/39%/41%). CSD, Hamilton, and GPD need ≥60-120 observations and don't run at shorter windows.
+
+For near-term (30d) crash detection: **LPPLS confidence + QQ + Max-to-Sum + Hill + Kappa**. The first is bubble-specific, the latter four are distributional — different signal families, good for ensemble.
 
 #### Core dataset (39 drawdowns across BTC, SPY, Gold)
 
-39 crash windows, 150 non-crash windows.
+39 crash windows, 150 non-crash windows (120d). Key methods run multi-timeframe (LPPLS confidence on 60/90/120d windows, kappa on 30/60/full, RV spike on 7/21 and 21/63 scales, GSADF on 80/120d).
 
 | Method | TP | FP | FN | TN | Precision | Recall | F1 |
 |--------|:--:|:--:|:--:|:--:|:---------:|:------:|:--:|
 | **LPPLS** | **35** | **40** | **4** | **110** | **47%** | **90%** | **61%** |
-| **LPPLS confidence** | **17** | **16** | **22** | **134** | **52%** | **44%** | **47%** |
-| M-LNN | 22 | 47 | 17 | 103 | 32% | 56% | 41% |
-| GSADF | 15 | 24 | 24 | 126 | 38% | 38% | 38% |
-| **DFA** | **32** | **115** | **7** | **35** | **22%** | **82%** | **34%** |
+| **LPPLS confidence** | **18** | **20** | **13** | **31** | **47%** | **58%** | **52%** |
 | CSD (on vol) | 20 | 59 | 19 | 91 | 25% | 51% | 34% |
 | Amihud | 19 | 60 | 20 | 90 | 24% | 49% | 32% |
-| RV spike | 21 | 71 | 18 | 79 | 23% | 54% | 32% |
+| RV spike | 26 | 102 | 13 | 48 | 20% | 67% | 31% |
 | Hamilton | 16 | 57 | 23 | 93 | 22% | 41% | 29% |
-| Hurst | 23 | 101 | 16 | 49 | 19% | 59% | 28% |
+| Kappa | 23 | 105 | 16 | 45 | 18% | 59% | 28% |
 | Pickands | 19 | 82 | 20 | 68 | 19% | 49% | 27% |
-| Kappa | 19 | 83 | 20 | 67 | 19% | 49% | 27% |
 | DEH | 18 | 81 | 21 | 69 | 18% | 46% | 26% |
-| Spectral | 11 | 38 | 28 | 112 | 22% | 28% | 25% |
 | Taleb Kappa | 13 | 53 | 26 | 97 | 20% | 33% | 25% |
-| P-LNN | 9 | 30 | 30 | 120 | 23% | 23% | 23% |
 | QQ | 15 | 79 | 24 | 71 | 16% | 38% | 23% |
 | GPD VaR | 10 | 73 | 14 | 66 | 12% | 42% | 19% |
 | Max-to-Sum | 12 | 86 | 27 | 64 | 12% | 31% | 18% |
 | Hill | 11 | 84 | 28 | 66 | 12% | 28% | 16% |
 
-#### Extended dataset (FRED forex + options backtester)
+#### Extended dataset (FRED forex + options backtester + Databento futures + LBMA)
 
-23 FRED forex pairs (1971-2025) and 6 options backtester series. 57 crash windows, 481 non-crash windows.
+23 FRED forex pairs (1971-2025), 6 options backtester series, 13 Databento futures (ES, GC, CL, ZN, HG, NG, ZB, 6A, 6B, 6C, 6E, 6J, 6S), and LBMA gold/silver (1968-2025). The FX futures (6A/6B/6C/6E/6J/6S) overlap FRED spot but include volume data, enabling Amihud illiquidity on forex. 367 crash windows, 911 non-crash windows (120d).
 
 | Method | TP | FP | FN | TN | Precision | Recall | F1 |
 |--------|:--:|:--:|:--:|:--:|:---------:|:------:|:--:|
-| LPPLS confidence | 31 | 45 | 26 | 436 | 41% | 54% | 47% |
-| LPPLS | 51 | 116 | 6 | 365 | 31% | 89% | 46% |
-| GSADF | 40 | 91 | 17 | 390 | 31% | 70% | 43% |
-| M-LNN | 35 | 136 | 22 | 345 | 20% | 61% | 31% |
-| QQ | 37 | 215 | 20 | 251 | 15% | 65% | 24% |
-| RV spike | 37 | 237 | 20 | 244 | 14% | 65% | 22% |
-| Max-to-Sum | 33 | 210 | 24 | 261 | 14% | 58% | 22% |
-| Kappa | 32 | 220 | 25 | 261 | 13% | 56% | 21% |
-| Hill | 28 | 202 | 29 | 279 | 12% | 49% | 20% |
-| Hurst | 40 | 314 | 17 | 160 | 11% | 70% | 19% |
-| Spectral | 17 | 118 | 40 | 356 | 13% | 30% | 18% |
-| DFA | 41 | 374 | 16 | 100 | 10% | 72% | 17% |
-| Pickands | 26 | 232 | 31 | 230 | 10% | 46% | 17% |
-| GPD VaR | 17 | 169 | 10 | 196 | 9% | 63% | 16% |
-| CSD (on vol) | 19 | 158 | 38 | 323 | 11% | 33% | 16% |
-| DEH | 25 | 233 | 32 | 233 | 10% | 44% | 16% |
-| Taleb Kappa | 21 | 187 | 36 | 280 | 10% | 37% | 16% |
-| Hamilton | 22 | 212 | 35 | 269 | 9% | 39% | 15% |
-| P-LNN | 5 | 52 | 52 | 429 | 9% | 9% | 9% |
+| **Kappa** | **282** | **565** | **85** | **346** | **33%** | **77%** | **46%** |
+| **LPPLS confidence** | **60** | **97** | **42** | **94** | **38%** | **59%** | **46%** |
+| Pickands | 221 | 421 | 146 | 471 | 34% | 60% | 44% |
+| **Amihud** | **136** | **195** | **156** | **216** | **41%** | **47%** | **44%** |
+| CSD (on vol) | 185 | 301 | 182 | 610 | 38% | 50% | 43% |
+| DEH | 217 | 421 | 150 | 475 | 34% | 59% | 43% |
+| RV spike | 250 | 661 | 117 | 250 | 27% | 68% | 39% |
+| Hamilton | 177 | 387 | 190 | 524 | 31% | 48% | 38% |
+| GPD VaR | 155 | 381 | 156 | 414 | 29% | 50% | 37% |
+| Taleb Kappa | 147 | 324 | 220 | 573 | 31% | 40% | 35% |
+| QQ | 158 | 410 | 209 | 486 | 28% | 43% | 34% |
+| LPPLS | 99 | 165 | 268 | 746 | 38% | 27% | 31% |
+| Hill | 143 | 413 | 224 | 498 | 26% | 39% | 31% |
+| Max-to-Sum | 133 | 422 | 234 | 479 | 24% | 36% | 29% |
 
-LPPLS maintains 89% recall on the extended dataset. GSADF jumps from F1=38% to F1=43% — forex pairs provide more explosive episodes for GSADF to detect. DFA's precision drops (10% vs 22%) because forex data shows persistent dynamics even in non-crash periods.
+On the extended dataset with 13 futures + LBMA, **kappa and LPPLS confidence tie at F1=46%**. **Amihud has the highest precision (41%)** — liquidity dry-ups are a reliable crash signal. LPPLS drops to F1=31% because contract rolls in futures corrupt bubble shapes; it remains dominant on equities/forex. CSD (F1=43%) and Hamilton (F1=38%) both improve with the richer dataset.
 
-#### Combined dataset (96 crash windows, 631 non-crash windows)
+#### Combined dataset (406 crash windows, 1061 non-crash windows)
 
 | Method | Precision | Recall | F1 |
 |--------|:---------:|:------:|:--:|
-| **LPPLS** | **36%** | **90%** | **51%** |
-| LPPLS confidence | 44% | 50% | 47% |
-| GSADF | 32% | 57% | 41% |
-| M-LNN | 24% | 59% | 34% |
-| Amihud | 21% | 49% | 30% |
-| RV spike | 16% | 60% | 25% |
-| QQ | 15% | 54% | 24% |
-| Kappa | 14% | 53% | 23% |
-| DFA | 13% | 76% | 22% |
-| CSD (on vol) | 15% | 41% | 22% |
-| Hurst | 13% | 66% | 22% |
-| Max-to-Sum | 13% | 47% | 21% |
-| Spectral | 15% | 29% | 20% |
-| Pickands | 13% | 47% | 20% |
-| DEH | 12% | 45% | 19% |
-| Hamilton | 12% | 40% | 19% |
-| Hill | 12% | 41% | 19% |
-| Taleb Kappa | 12% | 35% | 18% |
-| GPD VaR | 10% | 53% | 17% |
-| P-LNN | 15% | 15% | 15% |
+| **LPPLS confidence** | **40%** | **59%** | **48%** |
+| **Kappa** | **31%** | **75%** | **44%** |
+| CSD (on vol) | 36% | 50% | 42% |
+| **Amihud** | **38%** | **47%** | **42%** |
+| Pickands | 32% | 59% | 42% |
+| DEH | 32% | 58% | 41% |
+| RV spike | 27% | 68% | 38% |
+| Hamilton | 30% | 48% | 37% |
+| LPPLS | 40% | 33% | 36% |
+| GPD VaR | 27% | 49% | 35% |
+| Taleb Kappa | 30% | 39% | 34% |
+| QQ | 26% | 43% | 32% |
+| Hill | 24% | 38% | 29% |
+| Max-to-Sum | 22% | 36% | 27% |
 
-LPPLS recall holds at 90% across 96 crash windows spanning crypto, equities, commodities, and 23 forex pairs.
+On the combined dataset (crypto, equities, 23 forex pairs, 13 futures, LBMA gold/silver), **LPPLS confidence is #1 (F1=48%)** and **Amihud has the best precision (38%)**. The key insight: different methods dominate different asset types — LPPLS for equities/crypto, kappa/Amihud/CSD for futures/commodities. The ensemble captures both.
 
 ### Recall by crash size
 
@@ -276,89 +295,48 @@ LPPLS recall holds at 90% across 96 crash windows spanning crypto, equities, com
 |--------|:---:|:---:|:---:|
 | LPPLS | 86% | 100% | 75% |
 | DFA | 86% | 88% | 62% |
-| Hurst | 57% | 65% | 50% |
-| M-LNN | 57% | 65% | 38% |
+| LPPLS confidence | **70%** | 62% | 20% |
 | Amihud | **71%** | 47% | 12% |
-| RV spike | 50% | 53% | 62% |
+| RV spike | 57% | 71% | 75% |
+| Kappa | 64% | 59% | 50% |
+| Hurst | 57% | 65% | 50% |
 | CSD (on vol) | 50% | 47% | 62% |
-| LPPLS confidence | 43% | 59% | 12% |
 | Hamilton | 29% | 29% | **88%** |
 | DEH | 43% | 41% | 62% |
-| Taleb Kappa | 21% | 35% | 50% |
 | GSADF | 14% | 59% | 38% |
+| Taleb Kappa | 21% | 35% | 50% |
 
-LPPLS catches 100% of medium crashes. **Hamilton has 88% recall on major crashes** — the best single method for detecting large (>30%) drawdowns, though it rarely fires on smaller crashes.
+LPPLS catches 100% of medium crashes. **Hamilton has 88% recall on major crashes** — the best single method for detecting large (>30%) drawdowns, though it rarely fires on smaller crashes. Multi-timeframe LPPLS confidence now catches 70% of small crashes (up from 43%).
 
 ### Weighted ensemble aggregator
 
 Combines all methods via weighted average + category agreement bonus. When 3+ independent categories (bubble, tail, regime, structure) agree, probability gets a +15% bonus.
 
-**Core dataset (39 crash, 150 non-crash):**
+**Core dataset (39 crash, 150 non-crash, 120d):**
 
 | Threshold | Level | Precision | Recall | F1 |
 |:---------:|-------|:---------:|:------:|:--:|
-| 0.3 | ELEVATED+ | 23% | 82% | 36% |
-| 0.4 | >40% | 30% | 69% | 42% |
-| **0.5** | **HIGH+** | **54%** | **56%** | **55%** |
-| 0.7 | CRITICAL+ | 50% | 3% | 5% |
+| **0.3** | **ELEVATED+** | **22%** | **97%** | **36%** |
+| 0.4 | >40% | 23% | 85% | 36% |
+| 0.5 | HIGH+ | 24% | 62% | 35% |
+| 0.7 | CRITICAL+ | 33% | 13% | 19% |
 
-**Extended dataset (57 crash, 481 non-crash):**
+**Extended dataset (367 crash, 911 non-crash, 120d):**
 
 | Threshold | Level | Precision | Recall | F1 |
 |:---------:|-------|:---------:|:------:|:--:|
-| 0.3 | ELEVATED+ | 14% | 95% | 25% |
-| 0.4 | >40% | 20% | 81% | 32% |
-| **0.5** | **HIGH+** | **36%** | **58%** | **44%** |
-| 0.7 | CRITICAL+ | 17% | 2% | 3% |
+| **0.3** | **ELEVATED+** | **30%** | **94%** | **46%** |
+| 0.4 | >40% | 32% | 84% | 47% |
+| **0.5** | **HIGH+** | **37%** | **70%** | **49%** |
+| 0.7 | CRITICAL+ | 21% | 4% | 7% |
 
-At threshold 0.5, the hand-tuned aggregator achieves P=57%, R=54%, F1=55% on the core dataset. On the extended dataset it maintains F1=44%. The best individual method (LPPLS, F1=61%) still outperforms the hand-tuned ensemble.
-
-### Learned aggregator (logistic regression)
-
-A logistic regression with L1 regularization learns which signals actually predict crashes and which add noise. Leave-one-asset-out cross-validation provides honest out-of-sample numbers.
-
-**Leave-one-asset-out CV (core dataset):**
-
-| Held out | TP | FP | FN | TN | Precision | Recall | F1 |
-|----------|:--:|:--:|:--:|:--:|:---------:|:------:|:--:|
-| BTC | 10 | 20 | 3 | 30 | 33% | 77% | 47% |
-| Gold | 7 | 12 | 7 | 38 | 37% | 50% | 42% |
-| SPY | 6 | 8 | 6 | 42 | 43% | 50% | 46% |
-| **Overall** | **23** | **40** | **16** | **110** | **37%** | **59%** | **45%** |
-
-**Train on core → test on extended (true out-of-sample):**
-
-Trained on BTC/SPY/Gold, tested on 23 FRED forex pairs + 6 options backtester series the model has never seen.
-
-| Threshold | TP | FP | FN | TN | Precision | Recall | F1 |
-|:---------:|:--:|:--:|:--:|:--:|:---------:|:------:|:--:|
-| 0.3 | 44 | 197 | 13 | 284 | 18% | 77% | 30% |
-| **0.5** | **29** | **107** | **28** | **374** | **21%** | **51%** | **30%** |
-| 0.7 | 15 | 49 | 42 | 432 | 23% | 26% | 25% |
-
-**Learned weights** (which signals matter, which hurt):
-
-| Signal | Weight | Direction |
-|--------|:------:|:---------:|
-| lppls_confidence | +0.72 | Predictive |
-| kappa_regime | +0.68 | Predictive |
-| gsadf_bubble | +0.52 | Predictive |
-| lppls_tc_proximity | +0.39 | Predictive |
-| amihud_spike | +0.35 | Predictive |
-| rv_spike | +0.25 | Predictive |
-| hamilton_stress | +0.10 | Weak |
-| maxsum_signal | -0.85 | Hurts ensemble |
-| hill_thinning | -0.75 | Hurts ensemble |
-| gpd_var_exceedance | -0.57 | Hurts ensemble |
-| hurst_trending | -0.56 | Hurts ensemble |
-
-L1 regularization zeroes out uninformative signals. Key insight: **tail methods with low precision (Hill, max-to-sum, GPD, Hurst) actively hurt the ensemble** because they fire too often on non-crash windows. The useful signals are bubble detectors (LPPLS, GSADF), distributional shape (kappa), and the new liquidity signal (Amihud).
+At threshold 0.5, the ensemble reaches **F1=49%** with 37% precision and 70% recall — outperforming kappa (46%) on the extended dataset. The aggregator works because different methods excel on different asset classes: LPPLS dominates equities/crypto while kappa/Amihud/CSD dominate futures/commodities — the weighted combination captures both regimes.
 
 ### Why precision is low for tail/regime methods
 
-Tail and regime methods detect distributional shifts (tail thickening, persistent dynamics), not crash-specific patterns. They fire in many non-crash periods because fat tails and persistence are pervasive in financial data. This is by design — they measure the *distributional regime*, not a specific crash. LPPLS and GSADF have higher precision because they detect bubble-specific structure.
+Tail and regime methods detect distributional shifts (tail thickening, persistent dynamics), not crash-specific patterns. They fire in many non-crash periods because fat tails and persistence are pervasive in financial data. This is by design — they measure the *distributional regime*, not a specific crash. On equities/crypto, LPPLS and GSADF have higher precision because they detect bubble-specific structure. On futures/commodities, kappa and Amihud dominate because contract rolls corrupt bubble shapes but distributional shifts remain detectable.
 
-**The Sornette-Bouchaud debate:** Sornette (the LPPLS inventor) argues for high recall at the cost of precision because missing a crash is far more expensive than a false alarm. Bouchaud emphasizes that fat-tail estimators measure unconditional properties and are poor at conditional crash prediction. Both perspectives are reflected in fatcrash: LPPLS targets the mechanism (Sornette), tail estimators measure the regime (Bouchaud), and the aggregator combines both.
+**The Sornette-Bouchaud debate:** Sornette (the LPPLS inventor) argues for high recall at the cost of precision because missing a crash is far more expensive than a false alarm. Bouchaud emphasizes that fat-tail estimators measure unconditional properties and are poor at conditional crash prediction. The extended dataset validates both: LPPLS is best on equities (Sornette), kappa/Amihud are best on futures (Bouchaud), and the aggregator combines both perspectives. The multi-window results add nuance: order-statistic methods (QQ, Hill, Max-to-Sum) are *more* precise at short windows — distributional shifts are sharpest in recent data.
 
 ## 500 Years of Forex Data
 
@@ -578,35 +556,60 @@ gsadf_test(quarterly_revenue)     # Is revenue growth explosive?
 
 ## Architecture
 
+Cargo workspace with 3 crates:
+
 ```
-Rust (PyO3, _core.so)                Python
-┌────────────────────────────┐       ┌──────────────────────────────────┐
-│ Tail: Hill, Pickands, DEH, │       │ indicators/                      │
-│       QQ, Kappa, Taleb,    │──────▶│   tail_indicator.py              │
-│       MaxSum, Hurst, DFA,  │       │   vol_indicator.py               │
-│       Spectral, Momentum,  │       │   lppls_indicator.py             │
-│       Velocity, Skewness,  │       │   bubble_indicator.py            │
-│       Amihud, Absorption   │       │                                  │
-│                            │       │   evt_indicator.py               │
-│ EVT:  GPD, GEV             │       │   regime_indicator.py            │
-│                            │       │                                  │
-│ LPPLS: fit, confidence,    │──────▶│ nn/                              │
-│        solve_linear        │       │   mlnn.py      (M-LNN)          │
-│                            │       │   plnn.py      (P-LNN)          │
-│ Bubble: GSADF              │       │   lppls_torch.py (shared)       │
-│                            │       │   synthetic.py  (data gen)      │
-│ Multiscale                 │       │                                  │
-│                            │       │ aggregator/signals.py            │
-│ Regime:                    │       │                                  │
-│   RealizedVar, Jump, CSD,  │       │ data/ingest.py                   │
-│   Hamilton                 │       │ cli/ viz/ service/               │
-│                            │       │                                  │
-│ rayon: parallel CMA-ES,    │       │                                  │
-│        GSADF, confidence   │       │                                  │
-└────────────────────────────┘       └──────────────────────────────────┘
+fatcrash/
+├── crates/
+│   ├── fatcrash-core/        # Pure Rust computation library (no PyO3)
+│   │   └── src/
+│   │       ├── tail/         # Hill, Pickands, DEH, QQ, Kappa, MaxSum, Hurst,
+│   │       │                 # DFA, Spectral, Momentum, Velocity, Amihud
+│   │       ├── evt/          # GPD, GEV
+│   │       ├── lppls/        # LPPLS fit (CMA-ES), confidence, Sornette filter
+│   │       ├── bubble/       # GSADF
+│   │       ├── regime/       # Hamilton HMM, CSD, RealizedVar, Jump
+│   │       └── multiscale.rs
+│   ├── fatcrash-py/          # Thin PyO3 wrappers (cdylib)
+│   │   └── src/lib.rs        # #[pymodule] → fatcrash._core
+│   └── fatcrash-tui/         # Native Rust TUI monitor (ratatui)
+│       └── src/
+│           ├── main.rs       # CLI (clap)
+│           ├── scanner.rs    # Runs all 18 methods via fatcrash-core
+│           ├── signals.rs    # Signal aggregation + LPPLS-first architecture
+│           ├── data.rs       # Yahoo Finance + CoinGecko HTTP fetching
+│           ├── cache.rs      # CSV cache (~/.cache/fatcrash/)
+│           ├── config.rs     # Watchlist (31 assets: crypto, indices, tech, commodities)
+│           └── tui/          # Watchlist → Detail → Method drill-down views
+└── python/                   # Python package (indicators, CLI, viz, NN)
 ```
 
-All estimators and regime algorithms are in Rust, exposed via PyO3. Computationally intensive methods (LPPLS CMA-ES, GSADF, confidence, Hamilton EM) use rayon for parallelization. NN methods are in Python (PyTorch).
+```
+fatcrash-core (pure Rust)            fatcrash-py (PyO3)        fatcrash-tui (ratatui)
+┌────────────────────────────┐       ┌──────────────┐         ┌──────────────────────┐
+│ Tail: Hill, Pickands, DEH, │       │ PyO3 wrappers│         │ scanner.rs           │
+│       QQ, Kappa, Taleb,    │──────▶│ → _core.so   │         │  calls all 18 methods│
+│       MaxSum, Hurst, DFA,  │       └──────────────┘         │  via fatcrash-core   │
+│       Spectral, Momentum,  │                                │                      │
+│       Velocity, Amihud     │───────────────────────────────▶│ signals.rs           │
+│                            │                                │  LPPLS-first agg     │
+│ EVT:  GPD, GEV             │       Python                   │                      │
+│                            │       ┌──────────────┐         │ data.rs + cache.rs   │
+│ LPPLS: fit (CMA-ES),      │──────▶│ indicators/  │         │  Yahoo + CoinGecko   │
+│        confidence,         │       │ nn/ (PyTorch)│         │                      │
+│        Sornette filter     │       │ aggregator/  │         │ tui/ (3 views)       │
+│                            │       │ cli/ viz/    │         │  watchlist → detail  │
+│ Bubble: GSADF              │       └──────────────┘         │  → method drill-down │
+│                            │                                └──────────────────────┘
+│ Regime: Hamilton, CSD,     │
+│   RealizedVar, Jump        │
+│                            │
+│ rayon: parallel CMA-ES,    │
+│        GSADF, Hamilton EM  │
+└────────────────────────────┘
+```
+
+The TUI scanner has zero local algorithm implementations — every method call goes through fatcrash-core. All estimators and regime algorithms are in Rust. Computationally intensive methods (LPPLS CMA-ES, GSADF, confidence, Hamilton EM) use rayon for parallelization. NN methods are in Python (PyTorch).
 
 | Component | Language | Why |
 |-----------|----------|-----|
@@ -617,6 +620,26 @@ All estimators and regime algorithms are in Rust, exposed via PyO3. Computationa
 | All tail & regime estimators | Rust | Called at every rolling window step |
 | M-LNN, P-LNN | Python (PyTorch) | GPU support, autograd for training |
 | Data ingestion, viz, CLI | Python | Ecosystem (pandas, plotly, typer, FastAPI) |
+
+## TUI Monitor
+
+Native Rust terminal UI for real-time crash monitoring. Scans 31 assets (crypto, US/international indices, mega-cap tech, commodities, bonds, currency, sectors) across all 18 detection methods.
+
+```bash
+cargo run -p fatcrash-tui -- monitor                    # interactive TUI
+cargo run -p fatcrash-tui -- monitor --window 90        # 90-day pre-window
+cargo run -p fatcrash-tui -- monitor --days 730         # 2 years of history
+cargo run -p fatcrash-tui -- monitor --json --no-cache  # one-shot JSON output
+cargo run -p fatcrash-tui -- cache-clear                # clear cached data
+```
+
+**Three views:** Watchlist (sorted by crash probability) → Asset detail (all 18 methods with signal values, detection status, weights) → Method drill-down (raw intermediate values).
+
+**Keyboard:** `j/k` or arrows to navigate, `Enter/l` to drill down, `Esc/h` to go back, `r` to refresh, `w` to cycle window (60/90/120/180/252), `d` to cycle history days (180/365/730/1095), `q` to quit.
+
+**Data:** Yahoo Finance (equities, futures, forex) and CoinGecko (crypto). CSV cache in `~/.cache/fatcrash/` with 24h expiry. Auto-refresh every 5 minutes. Background scanning (never blocks UI).
+
+**Signal aggregation:** LPPLS-first architecture. If neither LPPLS confidence nor GSADF detects a bubble (both < 0.1), crash probability is zero. When a bubble signal fires, other methods (tail, regime, liquidity) act as confirmation/denial multipliers.
 
 ## Data Sources
 

@@ -26,7 +26,9 @@ pub fn gpd_mle(exceedances: &[f64]) -> (f64, f64) {
     let var = exceedances.iter().map(|x| (x - mean).powi(2)).sum::<f64>() / n;
 
     // Method of moments initial estimate
-    let xi_mom = 0.5 * (mean * mean / var - 1.0);
+    // For GPD: E[X] = sigma/(1-xi), Var[X] = sigma^2/((1-xi)^2*(1-2*xi))
+    // => mean^2/var = 1-2*xi => xi = 0.5*(1 - mean^2/var)
+    let xi_mom = 0.5 * (1.0 - mean * mean / var);
     let sigma_mom = mean * (1.0 - xi_mom);
 
     let mut sigma = if sigma_mom > 0.0 { sigma_mom } else { mean };

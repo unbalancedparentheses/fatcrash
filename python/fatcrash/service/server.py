@@ -78,11 +78,20 @@ def create_app() -> FastAPI:
 
         try:
             tail = estimate_tail_index(returns)
-            kappa = estimate_kappa(returns)
             tk = estimate_taleb_kappa(returns)
             components["hill_thinning"] = max(0, (4.0 - tail.alpha) / 4.0)
-            components["kappa_regime"] = kappa_regime_signal(kappa.kappa, kappa.gaussian_benchmark)
             components["taleb_kappa"] = taleb_kappa_signal(tk.kappa, tk.gaussian_benchmark)
+            # Multi-timeframe kappa: compute on recent sub-windows, take max signal
+            kappa_best = 0.0
+            for kappa_tail in [30, 60, len(returns)]:
+                if kappa_tail > len(returns):
+                    continue
+                sub = returns[-kappa_tail:]
+                if len(sub) < 20:
+                    continue
+                kappa = estimate_kappa(sub)
+                kappa_best = max(kappa_best, kappa_regime_signal(kappa.kappa, kappa.gaussian_benchmark))
+            components["kappa_regime"] = kappa_best
         except Exception:
             pass
 
@@ -93,11 +102,17 @@ def create_app() -> FastAPI:
         except Exception:
             pass
 
-        try:
-            spike = estimate_rv_spike(returns, short_window=21, long_window=126)
-            components["rv_spike"] = rv_spike_signal(spike.rv_short, spike.rv_long)
-        except Exception:
-            pass
+        # Multi-timeframe RV spike: fast (7/21) and slow (21/126) scales
+        rv_best = 0.0
+        for sw, lw in [(7, 21), (21, 126)]:
+            try:
+                if len(returns) >= lw:
+                    spike = estimate_rv_spike(returns, short_window=sw, long_window=lw)
+                    rv_best = max(rv_best, rv_spike_signal(spike.rv_short, spike.rv_long))
+            except Exception:
+                pass
+        if rv_best > 0:
+            components["rv_spike"] = rv_best
 
         try:
             if len(returns) > 100:

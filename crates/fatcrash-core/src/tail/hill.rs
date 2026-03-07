@@ -1,9 +1,6 @@
-/// Hill estimator for tail index alpha.
-/// Given sorted descending absolute exceedances, alpha = k / sum(ln(x_i / x_k))
+/// Hill (1975) estimator for tail index alpha.
+/// Given sorted descending absolute exceedances, alpha = k / sum(ln(x_i / x_{k+1}))
 /// Returns alpha (tail index). Lower alpha = fatter tails.
-///
-/// Includes Huisman et al. (2001) small-sample bias correction:
-///   alpha_corrected = alpha * (1 - 1/k)
 pub fn hill_estimate(sorted_desc: &[f64], k: usize) -> f64 {
     if k == 0 || k >= sorted_desc.len() {
         return f64::NAN;
@@ -19,14 +16,7 @@ pub fn hill_estimate(sorted_desc: &[f64], k: usize) -> f64 {
         return f64::NAN;
     }
 
-    let alpha = k as f64 / sum_log;
-
-    // Small-sample bias correction (Huisman et al. 2001)
-    if k > 2 {
-        alpha * (1.0 - 1.0 / k as f64)
-    } else {
-        alpha
-    }
+    k as f64 / sum_log
 }
 
 /// Compute Hill estimator for a given array of returns.

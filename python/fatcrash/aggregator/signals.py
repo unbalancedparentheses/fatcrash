@@ -43,26 +43,28 @@ class RegimeSignal:
     components: dict[str, float] = field(default_factory=dict)
 
 
-# Updated weights including NN methods
+# Weights informed by learned aggregator (L1-regularized logistic regression).
+# Methods with negative learned weights are zeroed out — they hurt the ensemble.
+# Positive-weight methods are boosted proportionally to their learned coefficients.
 DEFAULT_WEIGHTS = {
-    # Bubble detectors (highest weight — best accuracy)
-    "lppls_confidence": 0.18,
+    # Bubble detectors — strongest signals (learned weights: LPPLS +0.72, GSADF +0.52)
+    "lppls_confidence": 0.22,
     "lppls_tc_proximity": 0.06,
-    "gsadf_bubble": 0.12,
+    "gsadf_bubble": 0.16,
     # NN bubble detectors
     "mlnn_signal": 0.06,
     "plnn_signal": 0.06,
-    # Tail estimators
-    "gpd_var_exceedance": 0.07,
-    "kappa_regime": 0.05,
-    "taleb_kappa": 0.04,
-    "hill_thinning": 0.03,
+    # Tail estimators — kappa family works, others zeroed (Hill -0.75, maxsum -0.85)
+    "gpd_var_exceedance": 0.0,  # learned weight: -0.57
+    "kappa_regime": 0.12,       # learned weight: +0.68
+    "taleb_kappa": 0.06,
+    "hill_thinning": 0.0,       # learned weight: -0.75
     "pickands_thinning": 0.02,
     "deh_thinning": 0.02,
     "qq_thinning": 0.02,
-    "maxsum_signal": 0.02,
+    "maxsum_signal": 0.0,       # learned weight: -0.85
     # Regime / momentum / velocity
-    "hurst_trending": 0.03,
+    "hurst_trending": 0.0,      # learned weight: -0.56
     "dfa_trending": 0.03,
     "spectral_memory": 0.02,
     "momentum_reversal": 0.04,
@@ -74,7 +76,7 @@ DEFAULT_WEIGHTS = {
     "jump_risk_signal": 0.03,  # legacy BNS fraction — kept for backward compat
     "csd_warning": 0.03,
     "hamilton_stress": 0.03,
-    "amihud_spike": 0.03,
+    "amihud_spike": 0.05,      # learned weight: +0.35
     # Market regime signals (placeholder weights — require external data sources)
     "vrp_signal": 0.0,
     "sofr_ois_z": 0.0,

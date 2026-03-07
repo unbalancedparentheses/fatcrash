@@ -148,16 +148,23 @@ def detect(
             estimate_rv_spike, estimate_csd_on_vol, estimate_hamilton,
         )
 
-        spike = estimate_rv_spike(returns, short_window=21, long_window=126)
-        spike_status = "[red]!!![/]" if spike.ratio > 2.0 else (
-            "[yellow]![/]" if spike.ratio > 1.5 else "[green]OK[/]"
-        )
-        table.add_row(
-            "RV spike",
-            f"{spike.ratio:.2f}x",
-            f"short={spike.rv_short:.4f}",
-            spike_status,
-        )
+        # Multi-timeframe RV spike: fast and slow scales
+        best_spike = None
+        for sw, lw in [(7, 21), (21, 126)]:
+            if len(returns) >= lw:
+                s = estimate_rv_spike(returns, short_window=sw, long_window=lw)
+                if best_spike is None or s.ratio > best_spike.ratio:
+                    best_spike = s
+        if best_spike is not None:
+            spike_status = "[red]!!![/]" if best_spike.ratio > 2.0 else (
+                "[yellow]![/]" if best_spike.ratio > 1.5 else "[green]OK[/]"
+            )
+            table.add_row(
+                "RV spike",
+                f"{best_spike.ratio:.2f}x",
+                f"short={best_spike.rv_short:.4f}",
+                spike_status,
+            )
 
         csd = estimate_csd_on_vol(returns, rv_window=21, csd_window=63, roc_window=21)
         if csd is not None:

@@ -144,15 +144,24 @@ pub fn compute_kappa(data: &[f64], n_subsamples: usize) -> f64 {
 pub fn gaussian_kappa_benchmark(n: usize, n_subsamples: usize, n_sims: usize) -> f64 {
     let mut rng = StdRng::seed_from_u64(12345);
     let mut sum = 0.0;
+    let mut count = 0;
 
     for _ in 0..n_sims {
         let samples: Vec<f64> = (0..n)
             .map(|_| rng.sample::<f64, _>(StandardNormal))
             .collect();
-        sum += compute_kappa(&samples, n_subsamples);
+        let k = compute_kappa(&samples, n_subsamples);
+        if !k.is_nan() {
+            sum += k;
+            count += 1;
+        }
     }
 
-    sum / n_sims as f64
+    if count == 0 {
+        f64::NAN
+    } else {
+        sum / count as f64
+    }
 }
 
 /// Max-stability kappa: subsample-max ratio.

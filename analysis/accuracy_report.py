@@ -1,11 +1,13 @@
 """Accuracy analysis: honest precision/recall/F1 for every method against historical drawdowns.
 
-Evaluates all 15 methods (13 classical + 2 NN) on both crash windows (true positives)
+Evaluates crash detection methods on both crash windows (true positives)
 and non-crash windows (false positives), producing precision, recall, and F1 scores.
 
 Run:
-    python analysis/accuracy_report.py           # All 15 methods
-    python analysis/accuracy_report.py --skip-nn  # Classical methods only
+    python analysis/accuracy_report.py                    # 14 default methods (skip NN)
+    python analysis/accuracy_report.py --all-methods      # All 18 classical methods
+    python analysis/accuracy_report.py --skip-nn          # Classical methods only (no NN)
+    python analysis/accuracy_report.py --all-methods      # Include hurst, gsadf, dfa, spectral
 
 All accuracy numbers are in-sample on historical data. This is not financial advice.
 
@@ -83,6 +85,88 @@ def fred_min_dd(pair: str) -> float:
     # Extract pair name from filename like "fred_gbp_usd.csv"
     key = pair.replace("fred_", "").replace("_usd.csv", "").replace(".csv", "").lower()
     return 0.08 if key in majors else 0.15
+
+
+# ── Databento futures loaders ──────────────────────────────
+
+_DATABENTO_DIR = Path("/Users/unbalancedparen/projects/finance_research/data/databento")
+
+# Futures to test: (filename, root_symbol, display_name, min_drawdown)
+_DATABENTO_FUTURES = [
+    ("ES_FUT_ohlcv1d.parquet", "ES", "ES (S&P 500)", 0.08),
+    ("GC_FUT_ohlcv1d.parquet", "GC", "GC (Gold)", 0.08),
+    ("CL_FUT_ohlcv1d.parquet", "CL", "CL (Crude Oil)", 0.15),
+    ("ZN_FUT_ohlcv1d.parquet", "ZN", "ZN (10Y Treasury)", 0.05),
+    ("HG_FUT_ohlcv1d.parquet", "HG", "HG (Copper)", 0.15),
+    ("NG_FUT_ohlcv1d.parquet", "NG", "NG (Nat Gas)", 0.20),
+    ("ZB_FUT_ohlcv1d.parquet", "ZB", "ZB (30Y Treasury)", 0.05),
+    ("6A_FUT_ohlcv1d.parquet", "6A", "6A (AUD futures)", 0.08),
+    ("6B_FUT_ohlcv1d.parquet", "6B", "6B (GBP futures)", 0.08),
+    ("6C_FUT_ohlcv1d.parquet", "6C", "6C (CAD futures)", 0.08),
+    ("6E_FUT_ohlcv1d.parquet", "6E", "6E (EUR futures)", 0.08),
+    ("6J_FUT_ohlcv1d.parquet", "6J", "6J (JPY futures)", 0.08),
+    ("6S_FUT_ohlcv1d.parquet", "6S", "6S (CHF futures)", 0.08),
+]
+
+
+_LBMA_DIR = Path("/Users/unbalancedparen/projects/forex-centuries/data/sources/lbma")
+
+_LBMA_FILES = [
+    ("lbma_gold_daily.csv", "gold_pm_usd", "LBMA Gold", 0.15),
+    ("lbma_silver_daily.csv", "silver_usd", "LBMA Silver", 0.20),
+]
+
+
+def load_lbma(filepath, price_col) -> "pd.DataFrame | None":
+    """Load LBMA daily CSV and return DataFrame with DatetimeIndex + close column.
+
+    No volume column — Amihud will be None.
+    """
+    try:
+        raw = pd.read_csv(filepath)
+    except Exception:
+        return None
+    if "date" not in raw.columns or price_col not in raw.columns:
+        return None
+    raw["date"] = pd.to_datetime(raw["date"], errors="coerce")
+    raw = raw.dropna(subset=["date"])
+    raw[price_col] = pd.to_numeric(raw[price_col], errors="coerce")
+    raw = raw.dropna(subset=[price_col])
+    raw = raw[raw[price_col] > 0]
+    if len(raw) < 200:
+        return None
+    df = pd.DataFrame({"close": raw[price_col].values}, index=pd.DatetimeIndex(raw["date"].values))
+    df = df.sort_index()
+    return df
+
+
+def load_databento_continuous(filepath, root_symbol) -> "pd.DataFrame | None":
+    """Load Databento OHLCV parquet and build continuous front-month series.
+
+    Uses most-traded contract per day (by volume) to stitch contracts together.
+    Returns DataFrame with DatetimeIndex + close + volume columns.
+    """
+    try:
+        df = pd.read_parquet(filepath)
+    except Exception:
+        return None
+    # Filter out spreads and non-matching symbols
+    df = df[~df["symbol"].str.contains("-", na=False)]
+    df = df[df["symbol"].str.startswith(root_symbol)]
+    if len(df) < 200:
+        return None
+    # Group by date, pick highest-volume contract per day
+    df = df.copy()
+    df["date"] = df.index.date if hasattr(df.index, "date") else pd.to_datetime(df["ts_event"]).dt.date
+    idx = df.groupby("date")["volume"].idxmax()
+    continuous = df.loc[idx].copy()
+    continuous.index = pd.DatetimeIndex(continuous["date"])
+    continuous = continuous.sort_index()
+    continuous = continuous[["close", "volume"]].copy()
+    continuous = continuous[continuous["close"] > 0]
+    if len(continuous) < 200:
+        return None
+    return continuous
 
 
 # ── Drawdown detection ─────────────────────────────────────
@@ -167,13 +251,15 @@ def test_method_on_drawdown(df, peak_idx, window=120,
     base_end = max(0, pre_start - 30)
     base_start = max(0, base_end - window)
 
-    if base_end - base_start < 60 or pre_end - pre_start < 60:
+    min_len = max(20, window // 2)
+    if base_end - base_start < min_len or pre_end - pre_start < min_len:
         return None, None
 
     pre_ret = log_returns(df.iloc[pre_start:pre_end])
     base_ret = log_returns(df.iloc[base_start:base_end])
 
-    if len(pre_ret) < 30 or len(base_ret) < 30:
+    min_ret = max(15, window // 2)
+    if len(pre_ret) < min_ret or len(base_ret) < min_ret:
         return None, None
 
     results = {}
@@ -185,13 +271,26 @@ def test_method_on_drawdown(df, peak_idx, window=120,
     results["hill"] = pre_alpha < base_alpha
     components["hill_thinning"] = sig.hill_thinning_signal(pre_alpha, base_alpha)
 
-    # Kappa
-    pre_k, pre_b = kappa_metric(pre_ret, n_subsamples=5, n_sims=50)
+    # Kappa — multi-timeframe: compute on recent sub-windows and take max signal
+    kappa_signal_best = 0.0
+    kappa_detected = False
     base_k, base_b = kappa_metric(base_ret, n_subsamples=5, n_sims=50)
-    pre_ratio = pre_k / pre_b if pre_b > 0 else 1.0
     base_ratio = base_k / base_b if base_b > 0 else 1.0
-    results["kappa"] = pre_ratio < base_ratio
-    components["kappa_regime"] = sig.kappa_regime_signal(pre_k, pre_b)
+    for kappa_tail in [30, 60, len(pre_ret)]:
+        if kappa_tail > len(pre_ret):
+            continue
+        sub = pre_ret[-kappa_tail:]
+        if len(sub) < 20:
+            continue
+        k, b = kappa_metric(sub, n_subsamples=5, n_sims=50)
+        ratio = k / b if b > 0 else 1.0
+        sig_val = sig.kappa_regime_signal(k, b)
+        if sig_val > kappa_signal_best:
+            kappa_signal_best = sig_val
+        if ratio < base_ratio:
+            kappa_detected = True
+    results["kappa"] = kappa_detected
+    components["kappa_regime"] = kappa_signal_best
 
     # Taleb kappa
     try:
@@ -256,24 +355,29 @@ def test_method_on_drawdown(df, peak_idx, window=120,
         results["lppls"] = None
 
     # LPPLS confidence (multi-window, rayon-parallelized)
-    try:
-        pre_lp = log_prices(df.iloc[pre_start:pre_end])
-        pre_t = time_index(df.iloc[pre_start:pre_end])
-        conf_arr, tc_mean_arr, tc_std_arr = lppls_confidence(pre_t, pre_lp, n_windows=20, n_candidates=20)
-        conf = np.asarray(conf_arr)
-        tc_std = np.asarray(tc_std_arr)
-        valid = conf[~np.isnan(conf)]
-        if len(valid) > 0:
-            conf_val = float(valid[-1])
-            # Discount confidence by tc dispersion
-            last_tc_std = float(tc_std[~np.isnan(tc_std)][-1]) if np.any(~np.isnan(tc_std)) else 0.0
-            adjusted = conf_val * max(0.0, 1.0 - last_tc_std / 100.0)
-            results["lppls_confidence"] = adjusted > 0.3
-            components["lppls_confidence"] = sig.lppls_confidence_signal(adjusted)
-        else:
-            results["lppls_confidence"] = False
-    except Exception:
-        results["lppls_confidence"] = None
+    # Run on multiple timescales and take the max — catches both fast and slow bubbles
+    lppls_conf_best = 0.0
+    for lppls_wlen in [60, 90, 120]:
+        try:
+            lppls_start = max(0, pre_end - lppls_wlen)
+            if pre_end - lppls_start < 50:
+                continue
+            lp_sub = log_prices(df.iloc[lppls_start:pre_end])
+            t_sub = time_index(df.iloc[lppls_start:pre_end])
+            conf_arr, tc_mean_arr, tc_std_arr = lppls_confidence(t_sub, lp_sub, n_windows=20, n_candidates=20)
+            conf = np.asarray(conf_arr)
+            tc_std = np.asarray(tc_std_arr)
+            valid = conf[~np.isnan(conf)]
+            if len(valid) > 0:
+                conf_val = float(valid[-1])
+                last_tc_std = float(tc_std[~np.isnan(tc_std)][-1]) if np.any(~np.isnan(tc_std)) else 0.0
+                adjusted = conf_val * max(0.0, 1.0 - last_tc_std / 100.0)
+                lppls_conf_best = max(lppls_conf_best, adjusted)
+        except Exception:
+            pass
+    results["lppls_confidence"] = lppls_conf_best > 0.3 if lppls_conf_best > 0 else None
+    if lppls_conf_best > 0:
+        components["lppls_confidence"] = sig.lppls_confidence_signal(lppls_conf_best)
 
     # GSADF
     try:
@@ -330,17 +434,28 @@ def test_method_on_drawdown(df, peak_idx, window=120,
     else:
         results["spectral"] = None
 
-    # RV spike (replaces BNS jump risk — more robust at daily frequency)
-    try:
-        spike = estimate_rv_spike(pre_ret, short_window=21, long_window=min(len(pre_ret), 63))
-        base_spike = estimate_rv_spike(base_ret, short_window=21, long_window=min(len(base_ret), 63))
-        if not (np.isnan(spike.ratio) or np.isnan(base_spike.ratio)):
-            results["rv_spike"] = spike.ratio > base_spike.ratio
-            components["rv_spike"] = sig.rv_spike_signal(spike.rv_short, spike.rv_long)
-        else:
-            results["rv_spike"] = None
-    except Exception:
-        results["rv_spike"] = None
+    # RV spike — multi-timeframe: fast (7/21) and slow (21/63) scales, take max
+    rv_signal_best = 0.0
+    rv_detected = None
+    for sw, lw in [(7, 21), (21, 63)]:
+        try:
+            if len(pre_ret) < lw or len(base_ret) < lw:
+                continue
+            spike = estimate_rv_spike(pre_ret, short_window=sw, long_window=min(len(pre_ret), lw))
+            base_spike = estimate_rv_spike(base_ret, short_window=sw, long_window=min(len(base_ret), lw))
+            if not (np.isnan(spike.ratio) or np.isnan(base_spike.ratio)):
+                rv_val = sig.rv_spike_signal(spike.rv_short, spike.rv_long)
+                if rv_val > rv_signal_best:
+                    rv_signal_best = rv_val
+                if spike.ratio > base_spike.ratio:
+                    rv_detected = True
+                elif rv_detected is None:
+                    rv_detected = False
+        except Exception:
+            pass
+    results["rv_spike"] = rv_detected
+    if rv_signal_best > 0:
+        components["rv_spike"] = rv_signal_best
 
     # Hamilton filter
     try:
@@ -478,12 +593,528 @@ def train_nn_models(datasets):
     return plnn_model
 
 
+# ── Crash detection engine ─────────────────────────────────
+
+
+def run_crash_detection(datasets, window, run_nn, plnn_model, all_methods):
+    """Run crash detection at given window size. Returns results dict."""
+    tp_records = []
+    all_results = []
+    all_crash_events = {}
+    agg_thresholds = [0.3, 0.4, 0.5, 0.7]
+    agg_tp_probs = []
+
+    # ── Core dataset (BTC, SPY, Gold) ─────────────
+    for asset_name, threshold in [("btc", 0.15), ("spy", 0.08), ("gold", 0.08)]:
+        df = datasets[asset_name]
+        events = find_drawdowns(df, min_dd=threshold, min_apart=90)
+        all_crash_events[asset_name] = events
+
+        for ev in events:
+            res, comps = test_method_on_drawdown(
+                df, ev["peak_idx"], window=window,
+                run_nn=run_nn, plnn_model=plnn_model,
+            )
+            if res is None:
+                continue
+            dd = ev["dd_pct"]
+            size = "MAJOR" if abs(dd) > 30 else "MEDIUM" if abs(dd) > 15 else "SMALL"
+            for method, detected in res.items():
+                if detected is not None:
+                    tp_records.append((method, detected))
+                    all_results.append({
+                        "asset": asset_name.upper(),
+                        "date": ev["peak_date"].strftime("%Y-%m-%d"),
+                        "drawdown": dd, "size": size,
+                        "method": method, "detected": detected,
+                    })
+            if comps:
+                agg_tp_probs.append(aggregate_signals(comps).probability)
+
+    fp_records = []
+    agg_fp_probs = []
+
+    for asset_name in ["btc", "spy", "gold"]:
+        df = datasets[asset_name]
+        events = all_crash_events[asset_name]
+        non_crash = sample_non_crash_windows(df, events, n_samples=50, window=window, seed=42)
+        for nc in non_crash:
+            res, comps = test_method_on_non_crash(
+                df, nc["center_idx"], window=window,
+                run_nn=run_nn, plnn_model=plnn_model,
+            )
+            if res is None:
+                continue
+            for method, fired in res.items():
+                if fired is not None:
+                    fp_records.append((method, fired))
+            if comps:
+                agg_fp_probs.append(aggregate_signals(comps).probability)
+
+    # ── Extended dataset ──────────────────────────
+    ext_tp_records = []
+    ext_fp_records = []
+    ext_agg_tp_probs = []
+    ext_agg_fp_probs = []
+    ext_pair_stats = []
+
+    # FRED Forex
+    fred_dir = Path("/Users/unbalancedparen/projects/forex-centuries/data/sources/fred/daily")
+    fred_skip = {"fred_usd_broad_index.csv", "fred_usd_major_index.csv"}
+    fred_count = 0
+    if fred_dir.is_dir():
+        for csv_path in sorted(fred_dir.glob("fred_*.csv")):
+            if csv_path.name in fred_skip:
+                continue
+            df_fx = load_fred_forex(csv_path)
+            if df_fx is None:
+                continue
+            pair_name = csv_path.name
+            min_dd = fred_min_dd(pair_name)
+            events = find_drawdowns(df_fx, min_dd=min_dd, min_apart=90)
+            fred_count += 1
+            for ev in events:
+                res, comps = test_method_on_drawdown(
+                    df_fx, ev["peak_idx"], window=window,
+                    run_nn=run_nn, plnn_model=plnn_model,
+                )
+                if res is None:
+                    continue
+                for method, detected in res.items():
+                    if detected is not None:
+                        ext_tp_records.append((method, detected))
+                if comps:
+                    ext_agg_tp_probs.append(aggregate_signals(comps).probability)
+            non_crash = sample_non_crash_windows(df_fx, events, n_samples=20, window=window, seed=42)
+            for nc in non_crash:
+                res, comps = test_method_on_non_crash(
+                    df_fx, nc["center_idx"], window=window,
+                    run_nn=run_nn, plnn_model=plnn_model,
+                )
+                if res is None:
+                    continue
+                for method, fired in res.items():
+                    if fired is not None:
+                        ext_fp_records.append((method, fired))
+                if comps:
+                    ext_agg_fp_probs.append(aggregate_signals(comps).probability)
+            ext_pair_stats.append({
+                "source": "FRED", "name": pair_name.replace("fred_", "").replace(".csv", "").upper(),
+                "n_crash": len(events), "n_rows": len(df_fx),
+            })
+
+    # Options Backtester
+    opts_dir = Path("/Users/unbalancedparen/projects/options_backtester/tests/data")
+    opts_files = [
+        "spy_crisis_stocks.csv", "spy_covid_stocks.csv", "spy_bear_stocks.csv",
+        "spy_lowvol_stocks.csv", "qqq_2020_stocks.csv", "iwm_2020_stocks.csv",
+    ]
+    if opts_dir.is_dir():
+        for fname in opts_files:
+            fpath = opts_dir / fname
+            if not fpath.exists():
+                continue
+            try:
+                df_opt = from_csv(str(fpath), date_col="date", price_col="close")
+            except Exception:
+                continue
+            if len(df_opt) < 60:
+                continue
+            events = find_drawdowns(df_opt, min_dd=0.08, min_apart=30)
+            for ev in events:
+                res, comps = test_method_on_drawdown(
+                    df_opt, ev["peak_idx"], window=window,
+                    run_nn=run_nn, plnn_model=plnn_model,
+                )
+                if res is None:
+                    continue
+                for method, detected in res.items():
+                    if detected is not None:
+                        ext_tp_records.append((method, detected))
+                if comps:
+                    ext_agg_tp_probs.append(aggregate_signals(comps).probability)
+            non_crash = sample_non_crash_windows(df_opt, events, n_samples=10, window=window, seed=42)
+            for nc in non_crash:
+                res, comps = test_method_on_non_crash(
+                    df_opt, nc["center_idx"], window=window,
+                    run_nn=run_nn, plnn_model=plnn_model,
+                )
+                if res is None:
+                    continue
+                for method, fired in res.items():
+                    if fired is not None:
+                        ext_fp_records.append((method, fired))
+                if comps:
+                    ext_agg_fp_probs.append(aggregate_signals(comps).probability)
+            ext_pair_stats.append({
+                "source": "OptsBT", "name": fname.replace("_stocks.csv", "").upper(),
+                "n_crash": len(events), "n_rows": len(df_opt),
+            })
+
+    # Databento Futures
+    databento_count = 0
+    if _DATABENTO_DIR.is_dir():
+        for fname, root, display, min_dd in _DATABENTO_FUTURES:
+            fpath = _DATABENTO_DIR / fname
+            if not fpath.exists():
+                continue
+            df_fut = load_databento_continuous(fpath, root)
+            if df_fut is None:
+                continue
+            databento_count += 1
+            events = find_drawdowns(df_fut, min_dd=min_dd, min_apart=90)
+            for ev in events:
+                res, comps = test_method_on_drawdown(
+                    df_fut, ev["peak_idx"], window=window,
+                    run_nn=run_nn, plnn_model=plnn_model,
+                )
+                if res is None:
+                    continue
+                for method, detected in res.items():
+                    if detected is not None:
+                        ext_tp_records.append((method, detected))
+                if comps:
+                    ext_agg_tp_probs.append(aggregate_signals(comps).probability)
+            non_crash = sample_non_crash_windows(df_fut, events, n_samples=30, window=window, seed=42)
+            for nc in non_crash:
+                res, comps = test_method_on_non_crash(
+                    df_fut, nc["center_idx"], window=window,
+                    run_nn=run_nn, plnn_model=plnn_model,
+                )
+                if res is None:
+                    continue
+                for method, fired in res.items():
+                    if fired is not None:
+                        ext_fp_records.append((method, fired))
+                if comps:
+                    ext_agg_fp_probs.append(aggregate_signals(comps).probability)
+            ext_pair_stats.append({
+                "source": "Databento", "name": display,
+                "n_crash": len(events), "n_rows": len(df_fut),
+            })
+
+    # LBMA Gold & Silver
+    lbma_count = 0
+    if _LBMA_DIR.is_dir():
+        for fname, price_col, display, min_dd in _LBMA_FILES:
+            fpath = _LBMA_DIR / fname
+            if not fpath.exists():
+                continue
+            df_lbma = load_lbma(fpath, price_col)
+            if df_lbma is None:
+                continue
+            lbma_count += 1
+            events = find_drawdowns(df_lbma, min_dd=min_dd, min_apart=90)
+            for ev in events:
+                res, comps = test_method_on_drawdown(
+                    df_lbma, ev["peak_idx"], window=window,
+                    run_nn=run_nn, plnn_model=plnn_model,
+                )
+                if res is None:
+                    continue
+                for method, detected in res.items():
+                    if detected is not None:
+                        ext_tp_records.append((method, detected))
+                if comps:
+                    ext_agg_tp_probs.append(aggregate_signals(comps).probability)
+            non_crash = sample_non_crash_windows(df_lbma, events, n_samples=20, window=window, seed=42)
+            for nc in non_crash:
+                res, comps = test_method_on_non_crash(
+                    df_lbma, nc["center_idx"], window=window,
+                    run_nn=run_nn, plnn_model=plnn_model,
+                )
+                if res is None:
+                    continue
+                for method, fired in res.items():
+                    if fired is not None:
+                        ext_fp_records.append((method, fired))
+                if comps:
+                    ext_agg_fp_probs.append(aggregate_signals(comps).probability)
+            ext_pair_stats.append({
+                "source": "LBMA", "name": display,
+                "n_crash": len(events), "n_rows": len(df_lbma),
+            })
+
+    return {
+        "tp_records": tp_records,
+        "fp_records": fp_records,
+        "all_results": all_results,
+        "agg_tp_probs": agg_tp_probs,
+        "agg_fp_probs": agg_fp_probs,
+        "ext_tp_records": ext_tp_records,
+        "ext_fp_records": ext_fp_records,
+        "ext_agg_tp_probs": ext_agg_tp_probs,
+        "ext_agg_fp_probs": ext_agg_fp_probs,
+        "ext_pair_stats": ext_pair_stats,
+        "fred_count": fred_count,
+        "databento_count": databento_count,
+        "lbma_count": lbma_count,
+    }
+
+
+def print_crash_detection_results(results, window, all_methods):
+    """Print core/extended/combined/aggregator tables for one window."""
+    tp_records = results["tp_records"]
+    fp_records = results["fp_records"]
+    all_results = results["all_results"]
+    agg_tp_probs = results["agg_tp_probs"]
+    agg_fp_probs = results["agg_fp_probs"]
+    ext_tp_records = results["ext_tp_records"]
+    ext_fp_records = results["ext_fp_records"]
+    ext_agg_tp_probs = results["ext_agg_tp_probs"]
+    ext_agg_fp_probs = results["ext_agg_fp_probs"]
+    ext_pair_stats = results["ext_pair_stats"]
+    fred_count = results["fred_count"]
+    lbma_count = results["lbma_count"]
+
+    agg_thresholds = [0.3, 0.4, 0.5, 0.7]
+
+    metrics = compute_metrics(tp_records, fp_records, all_methods)
+
+    print("=" * 70)
+    print(f"CRASH DETECTION ({window}d window): PRECISION / RECALL / F1")
+    print("=" * 70)
+    print(f"  All numbers are in-sample on historical data (BTC, SPY, Gold).")
+    print()
+    print(f"  {'Method':<20} {'TP':>4} {'FP':>4} {'FN':>4} {'TN':>4}  "
+          f"{'Prec':>6} {'Recall':>6} {'F1':>6}")
+    print("  " + "-" * 64)
+
+    sorted_methods = sorted(all_methods, key=lambda m: metrics.get(m, {}).get("f1", 0), reverse=True)
+    for method in sorted_methods:
+        m = metrics.get(method)
+        if m is None or (m["tp"] + m["fn"]) == 0:
+            continue
+        print(
+            f"  {method:<20} {m['tp']:>4} {m['fp']:>4} {m['fn']:>4} {m['tn']:>4}  "
+            f"{m['precision']:>5.0%} {m['recall']:>6.0%} {m['f1']:>5.0%}"
+        )
+
+    print()
+    print("  Precision = TP/(TP+FP) — how often a signal is correct")
+    print("  Recall    = TP/(TP+FN) — how many crashes are caught")
+    print("  F1        = harmonic mean of precision and recall")
+
+    # ── Aggregator evaluation ──────────────────────
+    agg_metrics = {}
+    print("\n" + "=" * 70)
+    print(f"AGGREGATOR ({window}d): WEIGHTED ENSEMBLE + AGREEMENT BONUS")
+    print("=" * 70)
+    print("  Combines all methods via weighted average + category agreement bonus.")
+    print(f"  Tested on {len(agg_tp_probs)} crash windows, {len(agg_fp_probs)} non-crash windows.")
+    print()
+
+    if agg_tp_probs and agg_fp_probs:
+        tp_arr = np.array(agg_tp_probs)
+        fp_arr = np.array(agg_fp_probs)
+        print(f"  Crash windows:     mean={tp_arr.mean():.2f}  median={np.median(tp_arr):.2f}  "
+              f"min={tp_arr.min():.2f}  max={tp_arr.max():.2f}")
+        print(f"  Non-crash windows: mean={fp_arr.mean():.2f}  median={np.median(fp_arr):.2f}  "
+              f"min={fp_arr.min():.2f}  max={fp_arr.max():.2f}")
+        print()
+        print(f"  {'Threshold':<12} {'Level':<12} {'TP':>4} {'FP':>4} {'FN':>4} {'TN':>4}  "
+              f"{'Prec':>6} {'Recall':>6} {'F1':>6}")
+        print("  " + "-" * 64)
+
+        for thr in agg_thresholds:
+            tp = int((tp_arr >= thr).sum())
+            fn = int((tp_arr < thr).sum())
+            fp = int((fp_arr >= thr).sum())
+            tn = int((fp_arr < thr).sum())
+            prec = tp / (tp + fp) if (tp + fp) > 0 else 0.0
+            rec = tp / (tp + fn) if (tp + fn) > 0 else 0.0
+            f1 = 2 * prec * rec / (prec + rec) if (prec + rec) > 0 else 0.0
+            level = ("CRITICAL+" if thr >= 0.7 else "HIGH+" if thr >= 0.5
+                     else "ELEVATED+" if thr <= 0.3 else f">{thr:.0%}")
+            print(f"  {thr:<12.1f} {level:<12} {tp:>4} {fp:>4} {fn:>4} {tn:>4}  "
+                  f"{prec:>5.0%} {rec:>6.0%} {f1:>5.0%}")
+            agg_metrics[thr] = {"precision": prec, "recall": rec, "f1": f1,
+                                "tp": tp, "fp": fp, "fn": fn, "tn": tn}
+
+        print()
+        best_thr = max(agg_metrics, key=lambda t: agg_metrics[t]["f1"])
+        best = agg_metrics[best_thr]
+        lppls_f1 = metrics.get("lppls", {}).get("f1", 0)
+        print(f"  Best aggregator F1={best['f1']:.0%} at threshold {best_thr:.1f} "
+              f"(P={best['precision']:.0%}, R={best['recall']:.0%}).")
+        print(f"  Best individual method: LPPLS F1={lppls_f1:.0%}.")
+        if best["f1"] > lppls_f1:
+            print("  The ensemble improves over the best single method.")
+        else:
+            print("  The ensemble does not outperform the best single method.")
+    else:
+        print("  Insufficient data for aggregator evaluation.")
+
+    # ── Extended results ──────────────────────────
+    ext_n_crash = sum(1 for m, d in ext_tp_records if m == "lppls" and d is not None)
+    ext_n_noncrash = sum(1 for m, d in ext_fp_records if m == "lppls" and d is not None)
+
+    if ext_tp_records:
+        ext_metrics = compute_metrics(ext_tp_records, ext_fp_records, all_methods)
+
+        print("\n" + "=" * 70)
+        print(f"EXTENDED DATASET ({window}d): PRECISION / RECALL / F1")
+        print("=" * 70)
+        n_opts = len([s for s in ext_pair_stats if s["source"] == "OptsBT"])
+        n_db = len([s for s in ext_pair_stats if s["source"] == "Databento"])
+        n_lbma = len([s for s in ext_pair_stats if s["source"] == "LBMA"])
+        print(f"  FRED forex: {fred_count}, Options backtester: {n_opts}, "
+              f"Databento futures: {n_db}, LBMA: {n_lbma}")
+        print(f"  Crash windows: {ext_n_crash}, Non-crash windows: {ext_n_noncrash}")
+        if ext_pair_stats:
+            print("  Breakdown:")
+            for s in ext_pair_stats:
+                print(f"    {s['source']:<10} {s['name']:<20} {s['n_rows']:>6} rows, {s['n_crash']:>3} crashes")
+        print()
+        print(f"  {'Method':<20} {'TP':>4} {'FP':>4} {'FN':>4} {'TN':>4}  "
+              f"{'Prec':>6} {'Recall':>6} {'F1':>6}")
+        print("  " + "-" * 64)
+
+        ext_sorted = sorted(all_methods, key=lambda m: ext_metrics.get(m, {}).get("f1", 0), reverse=True)
+        for method in ext_sorted:
+            m = ext_metrics.get(method)
+            if m is None or (m["tp"] + m["fn"]) == 0:
+                continue
+            print(
+                f"  {method:<20} {m['tp']:>4} {m['fp']:>4} {m['fn']:>4} {m['tn']:>4}  "
+                f"{m['precision']:>5.0%} {m['recall']:>6.0%} {m['f1']:>5.0%}"
+            )
+
+        # Combined
+        combined_tp = tp_records + ext_tp_records
+        combined_fp = fp_records + ext_fp_records
+        combined_metrics = compute_metrics(combined_tp, combined_fp, all_methods)
+        orig_n_crash = sum(1 for m, d in tp_records if m == "lppls" and d is not None)
+        orig_n_noncrash = sum(1 for m, d in fp_records if m == "lppls" and d is not None)
+
+        print("\n" + "=" * 70)
+        print(f"COMBINED DATASET ({window}d): PRECISION / RECALL / F1")
+        print("=" * 70)
+        print(f"  Original (BTC/SPY/Gold): {orig_n_crash} crash + {orig_n_noncrash} non-crash windows")
+        print(f"  Extended (FRED+OptsBT+Databento+LBMA): {ext_n_crash} crash + {ext_n_noncrash} non-crash windows")
+        print(f"  Total: {orig_n_crash + ext_n_crash} crash + {orig_n_noncrash + ext_n_noncrash} non-crash windows")
+        print()
+        print(f"  {'Method':<20} {'TP':>4} {'FP':>4} {'FN':>4} {'TN':>4}  "
+              f"{'Prec':>6} {'Recall':>6} {'F1':>6}")
+        print("  " + "-" * 64)
+
+        comb_sorted = sorted(all_methods, key=lambda m: combined_metrics.get(m, {}).get("f1", 0), reverse=True)
+        for method in comb_sorted:
+            m = combined_metrics.get(method)
+            if m is None or (m["tp"] + m["fn"]) == 0:
+                continue
+            print(
+                f"  {method:<20} {m['tp']:>4} {m['fp']:>4} {m['fn']:>4} {m['tn']:>4}  "
+                f"{m['precision']:>5.0%} {m['recall']:>6.0%} {m['f1']:>5.0%}"
+            )
+
+        # Extended aggregator
+        if ext_agg_tp_probs and ext_agg_fp_probs:
+            ext_tp_arr = np.array(ext_agg_tp_probs)
+            ext_fp_arr = np.array(ext_agg_fp_probs)
+            print("\n" + "=" * 70)
+            print(f"EXTENDED AGGREGATOR ({window}d): WEIGHTED ENSEMBLE + AGREEMENT BONUS")
+            print("=" * 70)
+            print(f"  Tested on {len(ext_agg_tp_probs)} crash windows, {len(ext_agg_fp_probs)} non-crash windows.")
+            print()
+            print(f"  Crash windows:     mean={ext_tp_arr.mean():.2f}  median={np.median(ext_tp_arr):.2f}  "
+                  f"min={ext_tp_arr.min():.2f}  max={ext_tp_arr.max():.2f}")
+            print(f"  Non-crash windows: mean={ext_fp_arr.mean():.2f}  median={np.median(ext_fp_arr):.2f}  "
+                  f"min={ext_fp_arr.min():.2f}  max={ext_fp_arr.max():.2f}")
+            print()
+            print(f"  {'Threshold':<12} {'Level':<12} {'TP':>4} {'FP':>4} {'FN':>4} {'TN':>4}  "
+                  f"{'Prec':>6} {'Recall':>6} {'F1':>6}")
+            print("  " + "-" * 64)
+            for thr in agg_thresholds:
+                tp = int((ext_tp_arr >= thr).sum())
+                fn = int((ext_tp_arr < thr).sum())
+                fp = int((ext_fp_arr >= thr).sum())
+                tn = int((ext_fp_arr < thr).sum())
+                prec = tp / (tp + fp) if (tp + fp) > 0 else 0.0
+                rec = tp / (tp + fn) if (tp + fn) > 0 else 0.0
+                f1 = 2 * prec * rec / (prec + rec) if (prec + rec) > 0 else 0.0
+                level = ("CRITICAL+" if thr >= 0.7 else "HIGH+" if thr >= 0.5
+                         else "ELEVATED+" if thr <= 0.3 else f">{thr:.0%}")
+                print(f"  {thr:<12.1f} {level:<12} {tp:>4} {fp:>4} {fn:>4} {tn:>4}  "
+                      f"{prec:>5.0%} {rec:>6.0%} {f1:>5.0%}")
+    else:
+        print(f"\n  (No extended dataset found for {window}d window)")
+
+    # Recall by crash size (core dataset only)
+    rdf = pd.DataFrame(all_results)
+    if len(rdf) > 0:
+        print("\n" + "=" * 70)
+        print(f"RECALL BY METHOD AND CRASH SIZE ({window}d)")
+        print("=" * 70)
+        for method in sorted_methods:
+            subset = rdf[rdf["method"] == method]
+            if len(subset) == 0:
+                continue
+            print(f"\n  {method.upper()}")
+            for size in ["SMALL", "MEDIUM", "MAJOR"]:
+                s = subset[subset["size"] == size]
+                if len(s) == 0:
+                    continue
+                acc = s["detected"].mean()
+                print(f"    {size:<8} {s['detected'].sum()}/{len(s)} = {acc:.0%}")
+            total = subset["detected"].mean()
+            print(f"    {'TOTAL':<8} {subset['detected'].sum()}/{len(subset)} = {total:.0%}")
+
+    return metrics, agg_metrics
+
+
+def print_window_comparison(all_window_results, all_methods):
+    """Print F1 comparison across window sizes."""
+    print("\n" + "=" * 70)
+    print("COMPARISON ACROSS WINDOW SIZES (top methods by F1)")
+    print("=" * 70)
+
+    windows = sorted(all_window_results.keys())
+
+    # Collect combined F1 for each method at each window
+    method_f1 = {}
+    for w in windows:
+        metrics = all_window_results[w]
+        for method in all_methods:
+            m = metrics.get(method)
+            if m is None:
+                continue
+            if method not in method_f1:
+                method_f1[method] = {}
+            method_f1[method][w] = m["f1"]
+
+    # Sort by max F1 across any window
+    sorted_m = sorted(method_f1.keys(),
+                      key=lambda m: max(method_f1[m].values()) if method_f1[m] else 0,
+                      reverse=True)
+
+    header = f"  {'Method':<20}"
+    for w in windows:
+        header += f" {w:>4}d"
+    print(header)
+    print("  " + "-" * (20 + 6 * len(windows)))
+
+    for method in sorted_m:
+        row = f"  {method:<20}"
+        for w in windows:
+            f1 = method_f1[method].get(w)
+            if f1 is not None and f1 > 0:
+                row += f" {f1:>4.0%} "
+            else:
+                row += "    -- "
+        print(row)
+
+    print()
+
+
 # ── Main ───────────────────────────────────────────────────
 
 
 def main():
     parser = argparse.ArgumentParser(description="Accuracy report with honest metrics")
     parser.add_argument("--skip-nn", action="store_true", help="Skip NN methods (faster)")
+    parser.add_argument("--all-methods", action="store_true",
+                        help="Include disabled-by-default methods (hurst, gsadf, dfa, spectral)")
     args = parser.parse_args()
 
     run_nn = _TORCH_AVAILABLE and not args.skip_nn
@@ -502,639 +1133,45 @@ def main():
         plnn_model = train_nn_models(datasets)
         print()
 
-    # ══════════════════════════════════════════════
-    # Part 1a: True positive testing (crash windows)
-    # ══════════════════════════════════════════════
-    tp_records = []  # (method, detected)
-    all_results = []  # for detailed printout
+    # Methods disabled by default (low F1 in crash detection, still available as estimators)
+    DISABLED_BY_DEFAULT = {"hurst", "gsadf", "dfa", "spectral"}
 
-    all_crash_events = {}  # asset -> events, for FP sampling
-
-    # Aggregator: collect probabilities for crash windows
-    agg_thresholds = [0.3, 0.4, 0.5, 0.7]
-    agg_tp_probs = []  # list of aggregator probabilities on crash windows
-
-    # For learned aggregator: collect (asset, components, label) per window
-    signal_samples = []  # list of (asset_name, components_dict, 1=crash/0=non-crash)
-
-    for asset_name, threshold in [("btc", 0.15), ("spy", 0.08), ("gold", 0.08)]:
-        df = datasets[asset_name]
-        events = find_drawdowns(df, min_dd=threshold, min_apart=90)
-        all_crash_events[asset_name] = events
-
-        for ev in events:
-            res, comps = test_method_on_drawdown(
-                df, ev["peak_idx"],
-                run_nn=run_nn,
-                plnn_model=plnn_model,
-            )
-            if res is None:
-                continue
-
-            dd = ev["dd_pct"]
-            size = "MAJOR" if abs(dd) > 30 else "MEDIUM" if abs(dd) > 15 else "SMALL"
-
-            for method, detected in res.items():
-                if detected is not None:
-                    tp_records.append((method, detected))
-                    all_results.append(
-                        {
-                            "asset": asset_name.upper(),
-                            "date": ev["peak_date"].strftime("%Y-%m-%d"),
-                            "drawdown": dd,
-                            "size": size,
-                            "method": method,
-                            "detected": detected,
-                        }
-                    )
-
-            # Aggregator on crash window
-            if comps:
-                agg_result = aggregate_signals(comps)
-                agg_tp_probs.append(agg_result.probability)
-                signal_samples.append((asset_name, dict(comps), 1))
-
-    rdf = pd.DataFrame(all_results)
-
-    # ══════════════════════════════════════════════
-    # Part 1b: False positive testing (non-crash windows)
-    # ══════════════════════════════════════════════
-    fp_records = []  # (method, fired)
-    agg_fp_probs = []  # aggregator probabilities on non-crash windows
-
-    for asset_name in ["btc", "spy", "gold"]:
-        df = datasets[asset_name]
-        events = all_crash_events[asset_name]
-        non_crash = sample_non_crash_windows(df, events, n_samples=50, seed=42)
-
-        for nc in non_crash:
-            res, comps = test_method_on_non_crash(
-                df, nc["center_idx"],
-                run_nn=run_nn,
-                plnn_model=plnn_model,
-            )
-            if res is None:
-                continue
-            for method, fired in res.items():
-                if fired is not None:
-                    fp_records.append((method, fired))
-
-            # Aggregator on non-crash window
-            if comps:
-                agg_result = aggregate_signals(comps)
-                agg_fp_probs.append(agg_result.probability)
-                signal_samples.append((asset_name, dict(comps), 0))
-
-    # ══════════════════════════════════════════════
-    # Part 1c: Compute and display metrics
-    # ══════════════════════════════════════════════
     classical_methods = [
-        "lppls", "lppls_confidence", "gsadf", "hurst", "dfa",
+        "lppls", "lppls_confidence",
         "kappa", "taleb_kappa", "pickands", "deh", "qq",
-        "gpd_var", "maxsum", "spectral", "hill",
+        "gpd_var", "maxsum", "hill",
         "rv_spike", "hamilton", "csd",
         "amihud",
+        # Disabled by default — include only with --all-methods
+        "hurst", "gsadf", "dfa", "spectral",
     ]
+    if not args.all_methods:
+        classical_methods = [m for m in classical_methods if m not in DISABLED_BY_DEFAULT]
     nn_methods = ["mlnn", "plnn"] if run_nn else []
     all_methods = classical_methods + nn_methods
 
-    metrics = compute_metrics(tp_records, fp_records, all_methods)
-
-    print("=" * 70)
-    print("CRASH DETECTION: PRECISION / RECALL / F1")
-    print("=" * 70)
-    print("  All numbers are in-sample on historical data (BTC, SPY, Gold).")
-    print()
-    print(f"  {'Method':<20} {'TP':>4} {'FP':>4} {'FN':>4} {'TN':>4}  "
-          f"{'Prec':>6} {'Recall':>6} {'F1':>6}")
-    print("  " + "-" * 64)
-
-    # Sort by F1
-    sorted_methods = sorted(all_methods, key=lambda m: metrics.get(m, {}).get("f1", 0), reverse=True)
-    for method in sorted_methods:
-        m = metrics.get(method)
-        if m is None or (m["tp"] + m["fn"]) == 0:
-            continue
-        print(
-            f"  {method:<20} {m['tp']:>4} {m['fp']:>4} {m['fn']:>4} {m['tn']:>4}  "
-            f"{m['precision']:>5.0%} {m['recall']:>6.0%} {m['f1']:>5.0%}"
-        )
-
-    print()
-    print("  Precision = TP/(TP+FP) — how often a signal is correct")
-    print("  Recall    = TP/(TP+FN) — how many crashes are caught")
-    print("  F1        = harmonic mean of precision and recall")
-
-    # ── Aggregator evaluation ──────────────────────
-    print("\n" + "=" * 70)
-    print("AGGREGATOR: WEIGHTED ENSEMBLE + AGREEMENT BONUS")
-    print("=" * 70)
-    print("  Combines all methods via weighted average + category agreement bonus.")
-    print(f"  Tested on {len(agg_tp_probs)} crash windows, {len(agg_fp_probs)} non-crash windows.")
-    print()
-
-    if agg_tp_probs and agg_fp_probs:
-        tp_arr = np.array(agg_tp_probs)
-        fp_arr = np.array(agg_fp_probs)
-
-        print(f"  Crash windows:     mean={tp_arr.mean():.2f}  median={np.median(tp_arr):.2f}  "
-              f"min={tp_arr.min():.2f}  max={tp_arr.max():.2f}")
-        print(f"  Non-crash windows: mean={fp_arr.mean():.2f}  median={np.median(fp_arr):.2f}  "
-              f"min={fp_arr.min():.2f}  max={fp_arr.max():.2f}")
-        print()
-
-        print(f"  {'Threshold':<12} {'Level':<12} {'TP':>4} {'FP':>4} {'FN':>4} {'TN':>4}  "
-              f"{'Prec':>6} {'Recall':>6} {'F1':>6}")
-        print("  " + "-" * 64)
-
-        agg_metrics = {}
-        for thr in agg_thresholds:
-            tp = int((tp_arr >= thr).sum())
-            fn = int((tp_arr < thr).sum())
-            fp = int((fp_arr >= thr).sum())
-            tn = int((fp_arr < thr).sum())
-            prec = tp / (tp + fp) if (tp + fp) > 0 else 0.0
-            rec = tp / (tp + fn) if (tp + fn) > 0 else 0.0
-            f1 = 2 * prec * rec / (prec + rec) if (prec + rec) > 0 else 0.0
-
-            level = ("CRITICAL+" if thr >= 0.7 else "HIGH+" if thr >= 0.5
-                     else "ELEVATED+" if thr <= 0.3 else f">{thr:.0%}")
-            print(f"  {thr:<12.1f} {level:<12} {tp:>4} {fp:>4} {fn:>4} {tn:>4}  "
-                  f"{prec:>5.0%} {rec:>6.0%} {f1:>5.0%}")
-            agg_metrics[thr] = {"precision": prec, "recall": rec, "f1": f1,
-                                "tp": tp, "fp": fp, "fn": fn, "tn": tn}
-
-        print()
-        print("  ELEVATED+ (≥0.3): high recall, catches most crashes")
-        print("  HIGH+     (≥0.5): balanced, trades recall for fewer false alarms")
-        print("  CRITICAL+ (≥0.7): conservative, very few false alarms but misses most crashes")
-        print()
-
-        # Find optimal threshold
-        best_thr = max(agg_metrics, key=lambda t: agg_metrics[t]["f1"])
-        best = agg_metrics[best_thr]
-        lppls_f1 = metrics.get("lppls", {}).get("f1", 0)
-        print(f"  Best aggregator F1={best['f1']:.0%} at threshold {best_thr:.1f} "
-              f"(P={best['precision']:.0%}, R={best['recall']:.0%}).")
-        print(f"  Best individual method: LPPLS F1={lppls_f1:.0%}.")
-        if best["f1"] > lppls_f1:
-            print("  The ensemble improves over the best single method.")
-        else:
-            print("  The ensemble does not outperform the best single method with")
-            print("  hand-tuned weights. The weighted average dilutes the strongest")
-            print("  signal (LPPLS) with weaker methods. Learned weights or a")
-            print("  stacking classifier could improve this.")
-    else:
-        agg_metrics = {}
-        print("  Insufficient data for aggregator evaluation.")
-
     # ══════════════════════════════════════════════
-    # Part 1d: LEARNED AGGREGATOR (logistic regression + leave-one-asset-out)
+    # Multi-window crash detection
     # ══════════════════════════════════════════════
-    try:
-        from sklearn.linear_model import LogisticRegression
-        from sklearn.preprocessing import StandardScaler
+    WINDOW_SIZES = [30, 60, 120]
+    all_window_results = {}
 
-        print("\n" + "=" * 70)
-        print("LEARNED AGGREGATOR: LOGISTIC REGRESSION + LEAVE-ONE-ASSET-OUT CV")
-        print("=" * 70)
+    for window in WINDOW_SIZES:
+        print("\n" + "#" * 70)
+        print(f"# WINDOW SIZE: {window} days")
+        print("#" * 70 + "\n")
 
-        if len(signal_samples) > 20:
-            # Build feature matrix from signal components
-            # Use the same signal names across all samples
-            all_signal_names = sorted(set(
-                k for _, comps, _ in signal_samples for k in comps.keys()
-            ))
-            assets = np.array([s[0] for s in signal_samples])
-            y = np.array([s[2] for s in signal_samples])
-            X = np.zeros((len(signal_samples), len(all_signal_names)))
-            for i, (_, comps, _) in enumerate(signal_samples):
-                for j, name in enumerate(all_signal_names):
-                    val = comps.get(name, 0.0)
-                    X[i, j] = val if np.isfinite(val) else 0.0
+        results = run_crash_detection(datasets, window, run_nn, plnn_model, all_methods)
+        metrics, agg_metrics = print_crash_detection_results(results, window, all_methods)
 
-            unique_assets = sorted(set(assets))
-            print(f"  {len(signal_samples)} windows, {len(all_signal_names)} signals, "
-                  f"{int(y.sum())} crash / {int((1-y).sum())} non-crash")
-            print(f"  Assets: {', '.join(a.upper() for a in unique_assets)}")
-            print()
-
-            # ── Leave-one-asset-out cross-validation ──────────
-            print("  LEAVE-ONE-ASSET-OUT CROSS-VALIDATION:")
-            print("  (Train on 2 assets, test on the held-out asset)")
-            print()
-
-            cv_predictions = np.full(len(y), np.nan)
-            cv_probabilities = np.full(len(y), np.nan)
-
-            for held_out in unique_assets:
-                train_mask = assets != held_out
-                test_mask = assets == held_out
-
-                X_train, y_train = X[train_mask], y[train_mask]
-                X_test, y_test = X[test_mask], y[test_mask]
-
-                if y_train.sum() < 3 or (1 - y_train).sum() < 3:
-                    continue
-
-                scaler = StandardScaler()
-                X_train_s = scaler.fit_transform(X_train)
-                X_test_s = scaler.transform(X_test)
-
-                clf = LogisticRegression(
-                    solver="saga", C=1.0, l1_ratio=1.0,
-                    class_weight="balanced", max_iter=5000, random_state=42,
-                )
-                clf.fit(X_train_s, y_train)
-
-                probs = clf.predict_proba(X_test_s)[:, 1]
-                preds = (probs >= 0.5).astype(int)
-
-                cv_predictions[test_mask] = preds
-                cv_probabilities[test_mask] = probs
-
-                tp = int(((preds == 1) & (y_test == 1)).sum())
-                fp = int(((preds == 1) & (y_test == 0)).sum())
-                fn = int(((preds == 0) & (y_test == 1)).sum())
-                tn = int(((preds == 0) & (y_test == 0)).sum())
-                prec = tp / (tp + fp) if (tp + fp) > 0 else 0.0
-                rec = tp / (tp + fn) if (tp + fn) > 0 else 0.0
-                f1 = 2 * prec * rec / (prec + rec) if (prec + rec) > 0 else 0.0
-                print(f"  Held out {held_out.upper():<5}: "
-                      f"TP={tp:>2} FP={fp:>2} FN={fn:>2} TN={tn:>2}  "
-                      f"P={prec:>5.0%} R={rec:>5.0%} F1={f1:>5.0%}")
-
-            # Overall CV metrics
-            valid = ~np.isnan(cv_predictions)
-            if valid.sum() > 0:
-                cv_preds = cv_predictions[valid].astype(int)
-                cv_y = y[valid]
-                tp = int(((cv_preds == 1) & (cv_y == 1)).sum())
-                fp = int(((cv_preds == 1) & (cv_y == 0)).sum())
-                fn = int(((cv_preds == 0) & (cv_y == 1)).sum())
-                tn = int(((cv_preds == 0) & (cv_y == 0)).sum())
-                prec = tp / (tp + fp) if (tp + fp) > 0 else 0.0
-                rec = tp / (tp + fn) if (tp + fn) > 0 else 0.0
-                f1 = 2 * prec * rec / (prec + rec) if (prec + rec) > 0 else 0.0
-                print()
-                print(f"  OVERALL CV:      "
-                      f"TP={tp:>2} FP={fp:>2} FN={fn:>2} TN={tn:>2}  "
-                      f"P={prec:>5.0%} R={rec:>5.0%} F1={f1:>5.0%}")
-
-                lppls_f1 = metrics.get("lppls", {}).get("f1", 0)
-                handtuned_f1 = agg_metrics.get(0.5, {}).get("f1", 0) if agg_metrics else 0
-                print()
-                print(f"  Learned aggregator F1={f1:.0%} (out-of-sample)")
-                print(f"  Hand-tuned aggregator F1={handtuned_f1:.0%} (in-sample, threshold=0.5)")
-                print(f"  Best individual (LPPLS) F1={lppls_f1:.0%} (in-sample)")
-
-            # ── Fit on all data to show learned weights ──────
-            print()
-            print("  LEARNED WEIGHTS (fit on all data, for reference):")
-            scaler = StandardScaler()
-            X_s = scaler.fit_transform(X)
-            clf_full = LogisticRegression(
-                solver="saga", C=1.0, l1_ratio=1.0,
-                class_weight="balanced", max_iter=5000, random_state=42,
-            )
-            clf_full.fit(X_s, y)
-
-            coefs = clf_full.coef_[0]
-            # Sort by absolute weight
-            sorted_idx = np.argsort(-np.abs(coefs))
-            nonzero = [(all_signal_names[i], coefs[i]) for i in sorted_idx if abs(coefs[i]) > 0.01]
-            if nonzero:
-                print(f"  {'Signal':<25} {'Weight':>8}")
-                print("  " + "-" * 35)
-                for name, w in nonzero:
-                    direction = "+" if w > 0 else "-"
-                    print(f"  {name:<25} {direction}{abs(w):>7.3f}")
-                print()
-                zero_count = len(all_signal_names) - len(nonzero)
-                if zero_count > 0:
-                    print(f"  {zero_count} signals zeroed out by L1 regularization")
-            print()
-            print("  Note: positive weight = signal is predictive of crashes.")
-            print("  L1 penalty automatically drops uninformative signals.")
-        else:
-            print("  Insufficient signal samples for learned aggregator.")
-    except ImportError:
-        print("\n  (sklearn not available — skipping learned aggregator)")
-    except Exception as e:
-        print(f"\n  Learned aggregator failed: {e}")
-
-    # ══════════════════════════════════════════════
-    # Part 1e: EXTENDED DATASET (FRED Forex + Options Backtester)
-    # ══════════════════════════════════════════════
-    ext_tp_records = []  # (method, detected)
-    ext_fp_records = []  # (method, fired)
-    ext_agg_tp_probs = []
-    ext_agg_fp_probs = []
-    ext_pair_stats = []  # for summary
-    ext_signal_samples = []  # (source_name, components, label) for extended dataset
-
-    # ── FRED Forex ────────────────────────────────
-    fred_dir = Path("/Users/unbalancedparen/projects/forex-centuries/data/sources/fred/daily")
-    fred_skip = {"fred_usd_broad_index.csv", "fred_usd_major_index.csv"}
-    fred_count = 0
-
-    if fred_dir.is_dir():
-        for csv_path in sorted(fred_dir.glob("fred_*.csv")):
-            if csv_path.name in fred_skip:
-                continue
-            df_fx = load_fred_forex(csv_path)
-            if df_fx is None:
-                continue
-            pair_name = csv_path.name
-            min_dd = fred_min_dd(pair_name)
-            events = find_drawdowns(df_fx, min_dd=min_dd, min_apart=90)
-            fred_count += 1
-
-            for ev in events:
-                res, comps = test_method_on_drawdown(
-                    df_fx, ev["peak_idx"],
-                    run_nn=run_nn,
-                    plnn_model=plnn_model,
-                )
-                if res is None:
-                    continue
-                for method, detected in res.items():
-                    if detected is not None:
-                        ext_tp_records.append((method, detected))
-                if comps:
-                    agg_result = aggregate_signals(comps)
-                    ext_agg_tp_probs.append(agg_result.probability)
-                    ext_signal_samples.append((pair_name, dict(comps), 1))
-
-            non_crash = sample_non_crash_windows(df_fx, events, n_samples=20, seed=42)
-            for nc in non_crash:
-                res, comps = test_method_on_non_crash(
-                    df_fx, nc["center_idx"],
-                    run_nn=run_nn,
-                    plnn_model=plnn_model,
-                )
-                if res is None:
-                    continue
-                for method, fired in res.items():
-                    if fired is not None:
-                        ext_fp_records.append((method, fired))
-                if comps:
-                    agg_result = aggregate_signals(comps)
-                    ext_agg_fp_probs.append(agg_result.probability)
-                    ext_signal_samples.append((pair_name, dict(comps), 0))
-
-            ext_pair_stats.append({
-                "source": "FRED", "name": pair_name.replace("fred_", "").replace(".csv", "").upper(),
-                "n_crash": len(events), "n_rows": len(df_fx),
-            })
-
-    # ── Options Backtester ────────────────────────
-    opts_dir = Path("/Users/unbalancedparen/projects/options_backtester/tests/data")
-    opts_files = [
-        "spy_crisis_stocks.csv",
-        "spy_covid_stocks.csv",
-        "spy_bear_stocks.csv",
-        "spy_lowvol_stocks.csv",
-        "qqq_2020_stocks.csv",
-        "iwm_2020_stocks.csv",
-    ]
-
-    if opts_dir.is_dir():
-        for fname in opts_files:
-            fpath = opts_dir / fname
-            if not fpath.exists():
-                continue
-            try:
-                df_opt = from_csv(str(fpath), date_col="date", price_col="close")
-            except Exception:
-                continue
-            if len(df_opt) < 60:
-                continue
-            events = find_drawdowns(df_opt, min_dd=0.08, min_apart=30)
-
-            for ev in events:
-                res, comps = test_method_on_drawdown(
-                    df_opt, ev["peak_idx"],
-                    run_nn=run_nn,
-                    plnn_model=plnn_model,
-                )
-                if res is None:
-                    continue
-                for method, detected in res.items():
-                    if detected is not None:
-                        ext_tp_records.append((method, detected))
-                if comps:
-                    agg_result = aggregate_signals(comps)
-                    ext_agg_tp_probs.append(agg_result.probability)
-                    ext_signal_samples.append((fname, dict(comps), 1))
-
-            non_crash = sample_non_crash_windows(df_opt, events, n_samples=10, seed=42)
-            for nc in non_crash:
-                res, comps = test_method_on_non_crash(
-                    df_opt, nc["center_idx"],
-                    run_nn=run_nn,
-                    plnn_model=plnn_model,
-                )
-                if res is None:
-                    continue
-                for method, fired in res.items():
-                    if fired is not None:
-                        ext_fp_records.append((method, fired))
-                if comps:
-                    agg_result = aggregate_signals(comps)
-                    ext_agg_fp_probs.append(agg_result.probability)
-                    ext_signal_samples.append((fname, dict(comps), 0))
-
-            ext_pair_stats.append({
-                "source": "OptsBT", "name": fname.replace("_stocks.csv", "").upper(),
-                "n_crash": len(events), "n_rows": len(df_opt),
-            })
-
-    # ── Print extended results ────────────────────
-    ext_n_crash = sum(1 for m, d in ext_tp_records if m == "lppls" and d is not None)
-    ext_n_noncrash = sum(1 for m, d in ext_fp_records if m == "lppls" and d is not None)
-
-    if ext_tp_records:
-        ext_metrics = compute_metrics(ext_tp_records, ext_fp_records, all_methods)
-
-        print("\n" + "=" * 70)
-        print("EXTENDED DATASET: PRECISION / RECALL / F1")
-        print("=" * 70)
-        print(f"  FRED forex pairs: {fred_count}, Options backtester files: {len([s for s in ext_pair_stats if s['source'] == 'OptsBT'])}")
-        print(f"  Crash windows: {ext_n_crash}, Non-crash windows: {ext_n_noncrash}")
-        if ext_pair_stats:
-            print("  Breakdown:")
-            for s in ext_pair_stats:
-                print(f"    {s['source']:<6} {s['name']:<16} {s['n_rows']:>6} rows, {s['n_crash']:>3} crashes")
-        print()
-        print(f"  {'Method':<20} {'TP':>4} {'FP':>4} {'FN':>4} {'TN':>4}  "
-              f"{'Prec':>6} {'Recall':>6} {'F1':>6}")
-        print("  " + "-" * 64)
-
-        ext_sorted = sorted(all_methods, key=lambda m: ext_metrics.get(m, {}).get("f1", 0), reverse=True)
-        for method in ext_sorted:
-            m = ext_metrics.get(method)
-            if m is None or (m["tp"] + m["fn"]) == 0:
-                continue
-            print(
-                f"  {method:<20} {m['tp']:>4} {m['fp']:>4} {m['fn']:>4} {m['tn']:>4}  "
-                f"{m['precision']:>5.0%} {m['recall']:>6.0%} {m['f1']:>5.0%}"
-            )
-
-        # ── Combined (original + extended) ────────
-        combined_tp = tp_records + ext_tp_records
-        combined_fp = fp_records + ext_fp_records
+        # Store combined metrics for comparison table
+        combined_tp = results["tp_records"] + results["ext_tp_records"]
+        combined_fp = results["fp_records"] + results["ext_fp_records"]
         combined_metrics = compute_metrics(combined_tp, combined_fp, all_methods)
+        all_window_results[window] = combined_metrics
 
-        orig_n_crash = sum(1 for m, d in tp_records if m == "lppls" and d is not None)
-        orig_n_noncrash = sum(1 for m, d in fp_records if m == "lppls" and d is not None)
-
-        print("\n" + "=" * 70)
-        print("COMBINED DATASET: PRECISION / RECALL / F1")
-        print("=" * 70)
-        print(f"  Original (BTC/SPY/Gold): {orig_n_crash} crash + {orig_n_noncrash} non-crash windows")
-        print(f"  Extended (FRED+OptsBT):  {ext_n_crash} crash + {ext_n_noncrash} non-crash windows")
-        print(f"  Total:                   {orig_n_crash + ext_n_crash} crash + {orig_n_noncrash + ext_n_noncrash} non-crash windows")
-        print()
-        print(f"  {'Method':<20} {'TP':>4} {'FP':>4} {'FN':>4} {'TN':>4}  "
-              f"{'Prec':>6} {'Recall':>6} {'F1':>6}")
-        print("  " + "-" * 64)
-
-        comb_sorted = sorted(all_methods, key=lambda m: combined_metrics.get(m, {}).get("f1", 0), reverse=True)
-        for method in comb_sorted:
-            m = combined_metrics.get(method)
-            if m is None or (m["tp"] + m["fn"]) == 0:
-                continue
-            print(
-                f"  {method:<20} {m['tp']:>4} {m['fp']:>4} {m['fn']:>4} {m['tn']:>4}  "
-                f"{m['precision']:>5.0%} {m['recall']:>6.0%} {m['f1']:>5.0%}"
-            )
-
-        # ── Extended aggregator evaluation ────────
-        if ext_agg_tp_probs and ext_agg_fp_probs:
-            ext_tp_arr = np.array(ext_agg_tp_probs)
-            ext_fp_arr = np.array(ext_agg_fp_probs)
-
-            print("\n" + "=" * 70)
-            print("EXTENDED AGGREGATOR: WEIGHTED ENSEMBLE + AGREEMENT BONUS")
-            print("=" * 70)
-            print(f"  Tested on {len(ext_agg_tp_probs)} crash windows, {len(ext_agg_fp_probs)} non-crash windows.")
-            print()
-            print(f"  Crash windows:     mean={ext_tp_arr.mean():.2f}  median={np.median(ext_tp_arr):.2f}  "
-                  f"min={ext_tp_arr.min():.2f}  max={ext_tp_arr.max():.2f}")
-            print(f"  Non-crash windows: mean={ext_fp_arr.mean():.2f}  median={np.median(ext_fp_arr):.2f}  "
-                  f"min={ext_fp_arr.min():.2f}  max={ext_fp_arr.max():.2f}")
-            print()
-
-            print(f"  {'Threshold':<12} {'Level':<12} {'TP':>4} {'FP':>4} {'FN':>4} {'TN':>4}  "
-                  f"{'Prec':>6} {'Recall':>6} {'F1':>6}")
-            print("  " + "-" * 64)
-
-            for thr in agg_thresholds:
-                tp = int((ext_tp_arr >= thr).sum())
-                fn = int((ext_tp_arr < thr).sum())
-                fp = int((ext_fp_arr >= thr).sum())
-                tn = int((ext_fp_arr < thr).sum())
-                prec = tp / (tp + fp) if (tp + fp) > 0 else 0.0
-                rec = tp / (tp + fn) if (tp + fn) > 0 else 0.0
-                f1 = 2 * prec * rec / (prec + rec) if (prec + rec) > 0 else 0.0
-                level = ("CRITICAL+" if thr >= 0.7 else "HIGH+" if thr >= 0.5
-                         else "ELEVATED+" if thr <= 0.3 else f">{thr:.0%}")
-                print(f"  {thr:<12.1f} {level:<12} {tp:>4} {fp:>4} {fn:>4} {tn:>4}  "
-                      f"{prec:>5.0%} {rec:>6.0%} {f1:>5.0%}")
-    else:
-        print("\n  (No extended dataset found — FRED forex / options backtester dirs not available)")
-
-    # ══════════════════════════════════════════════
-    # Part 1f: LEARNED AGGREGATOR — train core, test extended
-    # ══════════════════════════════════════════════
-    if ext_signal_samples and signal_samples:
-        try:
-            from sklearn.linear_model import LogisticRegression
-            from sklearn.preprocessing import StandardScaler
-
-            print("\n" + "=" * 70)
-            print("LEARNED AGGREGATOR: TRAIN ON CORE → TEST ON EXTENDED (TRUE OOS)")
-            print("=" * 70)
-
-            # Use signal names from core
-            core_signal_names = sorted(set(
-                k for _, comps, _ in signal_samples for k in comps.keys()
-            ))
-
-            # Build core (train) matrix
-            y_train = np.array([s[2] for s in signal_samples])
-            X_train = np.zeros((len(signal_samples), len(core_signal_names)))
-            for i, (_, comps, _) in enumerate(signal_samples):
-                for j, name in enumerate(core_signal_names):
-                    val = comps.get(name, 0.0)
-                    X_train[i, j] = val if np.isfinite(val) else 0.0
-
-            # Build extended (test) matrix
-            y_test = np.array([s[2] for s in ext_signal_samples])
-            X_test = np.zeros((len(ext_signal_samples), len(core_signal_names)))
-            for i, (_, comps, _) in enumerate(ext_signal_samples):
-                for j, name in enumerate(core_signal_names):
-                    val = comps.get(name, 0.0)
-                    X_test[i, j] = val if np.isfinite(val) else 0.0
-
-            print(f"  Train: {len(signal_samples)} windows (BTC/SPY/Gold) — "
-                  f"{int(y_train.sum())} crash, {int((1-y_train).sum())} non-crash")
-            print(f"  Test:  {len(ext_signal_samples)} windows (FRED forex + OptsBT) — "
-                  f"{int(y_test.sum())} crash, {int((1-y_test).sum())} non-crash")
-            print()
-
-            scaler = StandardScaler()
-            X_train_s = scaler.fit_transform(X_train)
-            X_test_s = scaler.transform(X_test)
-
-            clf = LogisticRegression(
-                solver="saga", C=1.0, l1_ratio=1.0,
-                class_weight="balanced", max_iter=5000, random_state=42,
-            )
-            clf.fit(X_train_s, y_train)
-
-            probs = clf.predict_proba(X_test_s)[:, 1]
-
-            for thr_name, thr in [("0.3", 0.3), ("0.5", 0.5), ("0.7", 0.7)]:
-                preds = (probs >= thr).astype(int)
-                tp = int(((preds == 1) & (y_test == 1)).sum())
-                fp = int(((preds == 1) & (y_test == 0)).sum())
-                fn = int(((preds == 0) & (y_test == 1)).sum())
-                tn = int(((preds == 0) & (y_test == 0)).sum())
-                p = tp / (tp + fp) if (tp + fp) > 0 else 0.0
-                r = tp / (tp + fn) if (tp + fn) > 0 else 0.0
-                f = 2 * p * r / (p + r) if (p + r) > 0 else 0.0
-                print(f"  Threshold {thr_name}: TP={tp:>3} FP={fp:>3} FN={fn:>3} TN={tn:>3}  "
-                      f"P={p:>5.0%} R={r:>5.0%} F1={f:>5.0%}")
-
-            print()
-            print("  This is the strongest out-of-sample test: the model has NEVER seen")
-            print("  any forex pair or options series during training.")
-        except Exception as e:
-            print(f"\n  Train-core-test-extended failed: {e}")
-
-    # ══════════════════════════════════════════════
-    # Part 1g: Recall by crash size (backward compat)
-    # ══════════════════════════════════════════════
-    if len(rdf) > 0:
-        print("\n" + "=" * 70)
-        print("RECALL BY METHOD AND CRASH SIZE")
-        print("=" * 70)
-
-        for method in sorted_methods:
-            subset = rdf[rdf["method"] == method]
-            if len(subset) == 0:
-                continue
-            print(f"\n  {method.upper()}")
-            for size in ["SMALL", "MEDIUM", "MAJOR"]:
-                s = subset[subset["size"] == size]
-                if len(s) == 0:
-                    continue
-                acc = s["detected"].mean()
-                print(f"    {size:<8} {s['detected'].sum()}/{len(s)} = {acc:.0%}")
-            total = subset["detected"].mean()
-            print(f"    {'TOTAL':<8} {subset['detected'].sum()}/{len(subset)} = {total:.0%}")
+    # ── Window comparison table ───────────────────
+    print_window_comparison(all_window_results, all_methods)
 
     # ══════════════════════════════════════════════
     # Part 2: Decade-by-decade GBP/USD
@@ -1418,7 +1455,7 @@ def main():
     # ══════════════════════════════════════════════
     # Part 7: Cross-Method Summary
     # ══════════════════════════════════════════════
-    n_methods = 15 if run_nn else 13
+    n_methods = len(all_methods)
     print("\n" + "=" * 70)
     print(f"CROSS-METHOD SUMMARY: ALL {n_methods} METHODS")
     print("=" * 70)
@@ -1491,69 +1528,62 @@ def main():
     print("CONCLUSIONS")
     print("=" * 70)
 
-    # Build conclusion text dynamically from actual metrics
-    lppls_m = metrics.get("lppls", {})
-    lppls_conf_m = metrics.get("lppls_confidence", {})
-    dfa_m = metrics.get("dfa", {})
-    hurst_m = metrics.get("hurst", {})
+    # Use 120d combined metrics for conclusions
+    metrics_120 = all_window_results.get(120, {})
+    lppls_m = metrics_120.get("lppls", {})
+    lppls_conf_m = metrics_120.get("lppls_confidence", {})
+    dfa_m = metrics_120.get("dfa", {})
+    hurst_m = metrics_120.get("hurst", {})
 
-    # Best aggregator threshold by F1
-    best_agg_thr = max(agg_metrics, key=lambda t: agg_metrics[t]["f1"]) if agg_metrics else 0.5
-    best_agg = agg_metrics.get(best_agg_thr, {})
+    n_methods = len(all_methods)
+    n_windows = len(WINDOW_SIZES)
 
     print(f"""
   NOTE: All accuracy numbers are in-sample on historical data. Precision
   measures how often a signal is correct (low false positive rate); recall
   measures how many crashes are caught. Neither alone is sufficient.
+  Tested at {n_windows} window sizes: {', '.join(f'{w}d' for w in WINDOW_SIZES)}.
 
   1. LPPLS with tightened filter (omega [6,13], tc constraint):
-     Recall={lppls_m.get('recall', 0):.0%}, Precision={lppls_m.get('precision', 0):.0%}, F1={lppls_m.get('f1', 0):.0%}.
+     F1={lppls_m.get('f1', 0):.0%} (120d).
      The Nielsen (2024) omega range and tc proximity constraint reduce
      false positives compared to the original loose bounds.
 
   2. LPPLS confidence (multi-window):
-     Recall={lppls_conf_m.get('recall', 0):.0%}, Precision={lppls_conf_m.get('precision', 0):.0%}, F1={lppls_conf_m.get('f1', 0):.0%}.
+     F1={lppls_conf_m.get('f1', 0):.0%} (120d).
      Aggregating across many sub-windows provides a more robust signal.
 
-  3. AGGREGATOR (best threshold={best_agg_thr:.1f}):
-     Recall={best_agg.get('recall', 0):.0%}, Precision={best_agg.get('precision', 0):.0%}, F1={best_agg.get('f1', 0):.0%}.
-     The weighted ensemble with category agreement bonus outperforms
-     individual methods by combining independent signal categories.
+  3. DFA is the best non-bubble method:
+     F1={dfa_m.get('f1', 0):.0%} (120d).
+     Handles non-stationarity better than R/S Hurst (F1={hurst_m.get('f1', 0):.0%}).
 
-  4. DFA is the best non-bubble method:
-     Recall={dfa_m.get('recall', 0):.0%}, Precision={dfa_m.get('precision', 0):.0%}, F1={dfa_m.get('f1', 0):.0%}.
-     Handles non-stationarity better than R/S Hurst
-     (Recall={hurst_m.get('recall', 0):.0%}, F1={hurst_m.get('f1', 0):.0%}).
-
-  5. Tail estimators (kappa, Pickands, DEH, Hill) have moderate recall
+  4. Tail estimators (kappa, Pickands, DEH, Hill) have moderate recall
      but trade off against precision — they detect distributional regime
      shifts, not crash-specific patterns.
 
-  6. GSADF is better for medium/major crashes than small ones —
+  5. GSADF is better for medium/major crashes than small ones —
      explosive unit root tests need sustained price growth.
 
-  7. Fat tails are universal across all timescales:
+  6. Fat tails are universal across all timescales:
      - Daily returns (BTC, SPY, Gold, GBP/USD): alpha 2-4
      - Decade-by-decade forex: every decade shows fat tails
      - Century-scale exchange rates: every currency shows fat tails
 
-  8. All 6 known GBP/USD crises detected (100%): IMF 1976, Plaza 1985,
+  7. All 6 known GBP/USD crises detected (100%): IMF 1976, Plaza 1985,
      Black Wednesday 1992, 2008 crisis, Brexit 2016, Truss 2022.
 
-  9. The {n_methods}-method aggregator is the point: no single method is
+  8. The {n_methods}-method aggregator is the point: no single method is
      reliable alone. The ensemble combines 4 independent categories
      (bubble, tail, regime, structure) — when multiple categories agree,
      confidence increases. This is the core design principle.""")
 
     if run_nn:
-        mlnn_m = metrics.get("mlnn", {})
-        plnn_m = metrics.get("plnn", {})
+        mlnn_m = metrics_120.get("mlnn", {})
+        plnn_m = metrics_120.get("plnn", {})
         print(f"""
   NN METHODS (in-sample, requires PyTorch):
-  9. M-LNN:  Recall={mlnn_m.get('recall', 0):.0%}, Precision={mlnn_m.get('precision', 0):.0%}, F1={mlnn_m.get('f1', 0):.0%}
-     Per-series fitting, no pre-training. Slower but flexible.
-  10. P-LNN: Recall={plnn_m.get('recall', 0):.0%}, Precision={plnn_m.get('precision', 0):.0%}, F1={plnn_m.get('f1', 0):.0%}
-     Pre-trained on synthetic data, ~700x faster at inference.""")
+  9. M-LNN:  F1={mlnn_m.get('f1', 0):.0%}. Per-series fitting, slower but flexible.
+  10. P-LNN: F1={plnn_m.get('f1', 0):.0%}. Pre-trained, ~700x faster at inference.""")
 
     print()
 

@@ -76,9 +76,21 @@ pub fn smooth(
     p00: f64,
     p11: f64,
 ) -> Vec<f64> {
+    let (smoothed, _, _) = smooth_full(data, mu, sigma, p00, p11);
+    smoothed
+}
+
+/// Kim smoother returning (smoothed, filtered, predicted) for use in EM.
+fn smooth_full(
+    data: &[f64],
+    mu: [f64; 2],
+    sigma: [f64; 2],
+    p00: f64,
+    p11: f64,
+) -> (Vec<f64>, Vec<f64>, Vec<f64>) {
     let n = data.len();
     if n == 0 {
-        return vec![];
+        return (vec![], vec![], vec![]);
     }
 
     // Forward pass: collect filtered and predicted probabilities
@@ -133,7 +145,7 @@ pub fn smooth(
         smoothed[t] = clip(s1_to_s0 + s1_to_s1);
     }
 
-    smoothed
+    (smoothed, filtered_s1, predicted_s1)
 }
 
 /// EM estimation of 2-state HMM with a single random start.
@@ -170,20 +182,22 @@ pub fn em_single(data: &[f64], seed: u64) -> (f64, [f64; 2], [f64; 2], f64, f64,
     let mut prev_ll = f64::NEG_INFINITY;
 
     for _ in 0..EM_MAX_ITER {
-        // E-step: smoothed probabilities
-        let smoothed = smooth(data, mu, sigma, p00, p11);
+        // E-step: smoothed, filtered, and predicted probabilities
+        let (smoothed, filtered_s1, predicted_s1) = smooth_full(data, mu, sigma, p00, p11);
 
-        // Compute log-likelihood
+        // Compute observed-data log-likelihood from forward filter prediction densities:
+        // log L = sum_t log P(y_t | y_{1:t-1})
+        //       = sum_t log [ sum_j f_j(y_t) * P(s_t=j | y_{1:t-1}) ]
         let ll: f64 = data
             .iter()
             .enumerate()
             .map(|(t, &y)| {
-                let p1 = smoothed[t];
-                let p0 = 1.0 - p1;
+                let pred_s1 = predicted_s1[t];
+                let pred_s0 = 1.0 - pred_s1;
                 let l0 = log_normal_pdf(y, mu[0], sigma[0]);
                 let l1 = log_normal_pdf(y, mu[1], sigma[1]);
                 let max_l = l0.max(l1);
-                max_l + (p0 * (l0 - max_l).exp() + p1 * (l1 - max_l).exp()).ln()
+                max_l + (pred_s0 * (l0 - max_l).exp() + pred_s1 * (l1 - max_l).exp()).ln()
             })
             .sum();
 
@@ -192,7 +206,7 @@ pub fn em_single(data: &[f64], seed: u64) -> (f64, [f64; 2], [f64; 2], f64, f64,
         }
         prev_ll = ll;
 
-        // M-step: update parameters from smoothed probabilities
+        // M-step: emission parameters from smoothed state-occupation probabilities
         let w0_sum: f64 = smoothed.iter().map(|&p| 1.0 - p).sum();
         let w1_sum: f64 = smoothed.iter().sum();
 
@@ -230,30 +244,44 @@ pub fn em_single(data: &[f64], seed: u64) -> (f64, [f64; 2], [f64; 2], f64, f64,
                 .max(1e-6);
         }
 
-        // Transition probabilities from consecutive smoothed probs
+        // M-step: transition probabilities from joint smoothed probabilities
+        // ξ(t,i,j) = P(s_t=i, s_{t+1}=j | Y_{1:T})
+        //          = filtered[t][i] * a_{ij} * smoothed[t+1][j] / predicted[t+1][j]
+        // p_ij = sum_t ξ(t,i,j) / sum_t smoothed[t][i]  (for t=0..T-2)
         if n > 1 {
-            let mut n00 = 0.0;
-            let mut n0 = 0.0;
-            let mut n11 = 0.0;
-            let mut n1 = 0.0;
+            let mut xi_00 = 0.0; // sum of ξ(t, 0→0)
+            let mut xi_01 = 0.0; // sum of ξ(t, 0→1)
+            let mut xi_10 = 0.0; // sum of ξ(t, 1→0)
+            let mut xi_11 = 0.0; // sum of ξ(t, 1→1)
 
             for t in 0..(n - 1) {
-                let p0_t = 1.0 - smoothed[t];
-                let p1_t = smoothed[t];
-                let p0_next = 1.0 - smoothed[t + 1];
-                let p1_next = smoothed[t + 1];
+                let filt_s0 = 1.0 - filtered_s1[t];
+                let filt_s1 = filtered_s1[t];
+                let smooth_s0_next = 1.0 - smoothed[t + 1];
+                let smooth_s1_next = smoothed[t + 1];
+                let pred_s0_next = 1.0 - predicted_s1[t + 1];
+                let pred_s1_next = predicted_s1[t + 1];
 
-                n00 += p0_t * p0_next;
-                n0 += p0_t;
-                n11 += p1_t * p1_next;
-                n1 += p1_t;
+                // ξ(t, 0→0) = filtered_s0[t] * p00 * smoothed_s0[t+1] / predicted_s0[t+1]
+                if pred_s0_next > CLIP_LO {
+                    xi_00 += filt_s0 * p00 * smooth_s0_next / pred_s0_next;
+                    xi_10 += filt_s1 * (1.0 - p11) * smooth_s0_next / pred_s0_next;
+                }
+                // ξ(t, 0→1) = filtered_s0[t] * (1-p00) * smoothed_s1[t+1] / predicted_s1[t+1]
+                if pred_s1_next > CLIP_LO {
+                    xi_01 += filt_s0 * (1.0 - p00) * smooth_s1_next / pred_s1_next;
+                    xi_11 += filt_s1 * p11 * smooth_s1_next / pred_s1_next;
+                }
             }
 
-            if n0 > 1e-10 {
-                p00 = clip(n00 / n0);
+            let n0_trans = xi_00 + xi_01;
+            let n1_trans = xi_10 + xi_11;
+
+            if n0_trans > 1e-10 {
+                p00 = clip(xi_00 / n0_trans);
             }
-            if n1 > 1e-10 {
-                p11 = clip(n11 / n1);
+            if n1_trans > 1e-10 {
+                p11 = clip(xi_11 / n1_trans);
             }
         }
     }

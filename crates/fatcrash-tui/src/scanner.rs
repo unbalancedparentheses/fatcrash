@@ -1,4 +1,6 @@
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{mpsc, Mutex};
 
 use chrono::Utc;
 use rayon::prelude::*;
@@ -7,6 +9,19 @@ use crate::cache;
 use crate::config::WatchlistEntry;
 use crate::data;
 use crate::signals::{self, CrashSignal};
+
+/// Messages sent from the scanner thread to the TUI.
+#[derive(Debug, Clone)]
+pub enum ScanMsg {
+    /// One asset finished scanning.
+    Progress {
+        done: usize,
+        total: usize,
+        asset: String,
+    },
+    /// All assets done.
+    Done(Vec<AssetScan>),
+}
 
 #[derive(Debug, Clone)]
 pub struct AssetScan {
@@ -38,7 +53,8 @@ fn error_scan(asset: &str, now: chrono::DateTime<Utc>, err: &str) -> AssetScan {
             probability: 0.0,
             horizon_days: f64::INFINITY,
             components: HashMap::new(),
-            n_agreeing: 0,
+            n_confirming: 0,
+            confirming_categories: Vec::new(),
         },
         results: HashMap::new(),
         components: HashMap::new(),
@@ -81,6 +97,9 @@ pub fn scan_asset(
         }
     };
 
+    let open_prices: Vec<f64> = bars.iter().map(|b| b.open).collect();
+    let high_prices: Vec<f64> = bars.iter().map(|b| b.high).collect();
+    let low_prices: Vec<f64> = bars.iter().map(|b| b.low).collect();
     let close_prices: Vec<f64> = bars.iter().map(|b| b.close).collect();
     let volumes: Vec<f64> = bars.iter().map(|b| b.volume).collect();
     let data_points = close_prices.len();
@@ -238,13 +257,58 @@ pub fn scan_asset(
         ("Reversal score".into(), reversal),
     ]);
 
-    // 12. RV spike (short vs long)
-    let rv_short = safe_call(|| fatcrash_core::regime::realized_var::compute_realized_variance(&returns[n.saturating_sub(21)..]));
-    let rv_long = safe_call(|| fatcrash_core::regime::realized_var::compute_realized_variance(&returns[n.saturating_sub(126)..]));
+    // 19. Realized skewness (Neuberger 2012)
+    let skew = safe_call(|| {
+        fatcrash_core::tail::skewness::compute_realized_skewness(pre, pre.len())
+    });
+    record!("realized_skewness", signals::realized_skewness_signal(skew), vec![
+        ("Realized skewness".into(), skew),
+    ]);
+
+    // 20. GPD VaR exceedance
+    let gpd_sig = safe_call(|| {
+        match fatcrash_core::evt::gpd::gpd_var_es_slice(pre, 0.99, 0.95) {
+            Ok((var, es)) => {
+                let current_loss = -pre.last().unwrap_or(&0.0);
+                raw.insert("gpd_var_exceedance".into(), vec![
+                    ("VaR 99%".into(), var),
+                    ("ES 99%".into(), es),
+                    ("Current loss".into(), current_loss),
+                ]);
+                signals::var_exceedance_signal(current_loss, var)
+            }
+            Err(_) => f64::NAN,
+        }
+    });
+    record!("gpd_var_exceedance", gpd_sig);
+
+    // 12. RV spike (short vs long) — use Garman-Klass when real OHLC available
+    let has_ohlc = high_prices.iter().zip(low_prices.iter()).any(|(h, l)| (h - l).abs() > 1e-10);
+
+    let rv_short;
+    let rv_long;
+    let rv_estimator: &str;
+    if has_ohlc {
+        let short_start = open_prices.len().saturating_sub(21);
+        let long_start = open_prices.len().saturating_sub(126);
+        rv_short = safe_call(|| fatcrash_core::regime::realized_var::compute_realized_variance_gk(
+            &open_prices[short_start..], &high_prices[short_start..],
+            &low_prices[short_start..], &close_prices[short_start..],
+        ));
+        rv_long = safe_call(|| fatcrash_core::regime::realized_var::compute_realized_variance_gk(
+            &open_prices[long_start..], &high_prices[long_start..],
+            &low_prices[long_start..], &close_prices[long_start..],
+        ));
+        rv_estimator = "Garman-Klass";
+    } else {
+        rv_short = safe_call(|| fatcrash_core::regime::realized_var::compute_realized_variance(&returns[n.saturating_sub(21)..]));
+        rv_long = safe_call(|| fatcrash_core::regime::realized_var::compute_realized_variance(&returns[n.saturating_sub(126)..]));
+        rv_estimator = "Simple RV";
+    }
 
     record!("rv_spike", signals::rv_spike_signal(rv_short, rv_long), vec![
-        ("RV 21d".into(), rv_short),
-        ("RV 126d".into(), rv_long),
+        (format!("RV 21d ({})", rv_estimator), rv_short),
+        (format!("RV 126d ({})", rv_estimator), rv_long),
         ("Ratio short/long".into(), if rv_long > 0.0 { rv_short / rv_long } else { f64::NAN }),
     ]);
 
@@ -269,9 +333,9 @@ pub fn scan_asset(
     let mut csd_ar1_roc = f64::NAN;
     let mut csd_var_roc = f64::NAN;
     let csd_sig = safe_call(|| {
-        if pre.len() < 63 { return f64::NAN; }
+        if returns.len() < 126 { return f64::NAN; }
         let (ar1_roc, var_roc, _) =
-            fatcrash_core::regime::csd::csd_indicator_slice(pre, 42, 21);
+            fatcrash_core::regime::csd::csd_indicator_slice(&returns, 63, 21);
         // Take last valid values as the current CSD state
         csd_ar1_roc = ar1_roc.iter().rev().find(|v| v.is_finite()).copied().unwrap_or(0.0);
         csd_var_roc = var_roc.iter().rev().find(|v| v.is_finite()).copied().unwrap_or(0.0);
@@ -361,19 +425,21 @@ pub fn scan_asset(
         ("Excess over CV".into(), gsadf_stat - gsadf_cv),
     ]);
 
-    // Jump risk signal — uses fatcrash-core realized variance and bipower variation
+    // Jump risk signal — BNS z-test (Barndorff-Nielsen & Shephard)
+    let mut jump_z = f64::NAN;
     let mut jump_var = f64::NAN;
     let mut jump_rv = f64::NAN;
     let jump_sig = safe_call(|| {
         let recent = &returns[n.saturating_sub(63)..];
+        let (z_stat, jv) = fatcrash_core::regime::jump::compute_jump_test(recent);
         let rv = fatcrash_core::regime::realized_var::compute_realized_variance(recent);
-        let bv = fatcrash_core::regime::jump::compute_bipower_variation(recent);
-        if rv.is_nan() || bv.is_nan() { return f64::NAN; }
-        jump_var = (rv - bv).max(0.0);
+        jump_z = z_stat;
+        jump_var = jv;
         jump_rv = rv;
-        signals::jump_risk_signal_converter(jump_var, rv)
+        signals::jump_risk_signal_converter(jv, rv)
     });
     record!("jump_risk_signal", jump_sig, vec![
+        ("BNS z-statistic".into(), jump_z),
         ("Jump variance".into(), jump_var),
         ("Realized variance".into(), jump_rv),
         ("Jump fraction".into(), if jump_rv > 0.0 { jump_var / jump_rv } else { f64::NAN }),
@@ -417,20 +483,35 @@ pub fn scan_asset(
 }
 
 /// Scan all watchlist entries in parallel (max 3 threads for API rate limiting).
+/// Sends `ScanMsg::Progress` after each asset, then `ScanMsg::Done` at the end.
 pub fn scan_watchlist(
     entries: &[WatchlistEntry],
     window: usize,
     days: usize,
     use_cache: bool,
-) -> Vec<AssetScan> {
+    tx: mpsc::Sender<ScanMsg>,
+) {
+    let total = entries.len();
+    let results = Mutex::new(Vec::with_capacity(total));
+    let counter = AtomicUsize::new(0);
+
     let pool = rayon::ThreadPoolBuilder::new()
         .num_threads(3)
         .build()
         .unwrap_or_else(|_| rayon::ThreadPoolBuilder::new().build().unwrap());
     pool.install(|| {
-        entries
-            .par_iter()
-            .map(|e| scan_asset(e, window, days, use_cache))
-            .collect()
-    })
+        entries.par_iter().for_each(|e| {
+            let scan = scan_asset(e, window, days, use_cache);
+            let done = counter.fetch_add(1, Ordering::Relaxed) + 1;
+            let _ = tx.send(ScanMsg::Progress {
+                done,
+                total,
+                asset: e.symbol.clone(),
+            });
+            results.lock().unwrap().push(scan);
+        });
+    });
+
+    let scans = results.into_inner().unwrap();
+    let _ = tx.send(ScanMsg::Done(scans));
 }

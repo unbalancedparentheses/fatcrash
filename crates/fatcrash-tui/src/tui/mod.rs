@@ -14,7 +14,58 @@ use crossterm::terminal::{
 use ratatui::prelude::*;
 
 use crate::config::Config;
-use crate::scanner::{self, AssetScan};
+use crate::scanner::{self, AssetScan, ScanMsg};
+
+/// Color theme for the TUI.
+pub struct Theme {
+    pub title: Color,
+    pub header: Color,
+    pub text: Color,
+    pub text_dim: Color,
+    pub selected_bg: Color,
+    pub border: Color,
+    pub signal_high: Color,
+    pub signal_mid: Color,
+    pub signal_low: Color,
+    pub spark_up: Color,
+    pub spark_down: Color,
+}
+
+impl Default for Theme {
+    fn default() -> Self {
+        Self {
+            title: Color::Cyan,
+            header: Color::Yellow,
+            text: Color::White,
+            text_dim: Color::DarkGray,
+            selected_bg: Color::Rgb(40, 40, 60),
+            border: Color::Reset,
+            signal_high: Color::Red,
+            signal_mid: Color::Yellow,
+            signal_low: Color::Green,
+            spark_up: Color::Green,
+            spark_down: Color::Red,
+        }
+    }
+}
+
+impl Theme {
+    pub fn hacker() -> Self {
+        Self {
+            title: Color::Magenta,
+            header: Color::LightMagenta,
+            text: Color::Magenta,
+            text_dim: Color::Rgb(100, 50, 120),
+            selected_bg: Color::Rgb(50, 20, 60),
+            border: Color::Rgb(80, 40, 100),
+            signal_high: Color::LightRed,
+            signal_mid: Color::LightMagenta,
+            signal_low: Color::Rgb(100, 200, 100),
+            spark_up: Color::LightMagenta,
+            spark_down: Color::Rgb(180, 60, 180),
+        }
+    }
+}
 
 /// Current view in the TUI.
 #[derive(Debug, Clone)]
@@ -42,6 +93,13 @@ pub struct App {
     pub watchlist_offset: usize,
     /// Scroll offset for the detail methods table.
     pub detail_offset: usize,
+    pub theme: Theme,
+    pub hacker_mode: bool,
+    /// Scan progress tracking.
+    pub scan_done: usize,
+    pub scan_total: usize,
+    pub scan_current_asset: String,
+    pub scan_started: Option<Instant>,
 }
 
 impl App {
@@ -59,18 +117,37 @@ impl App {
             use_cache,
             watchlist_offset: 0,
             detail_offset: 0,
+            theme: Theme::default(),
+            hacker_mode: false,
+            scan_done: 0,
+            scan_total: 0,
+            scan_current_asset: String::new(),
+            scan_started: None,
         }
     }
 
-    /// Get scans sorted by probability descending.
+    pub fn toggle_theme(&mut self) {
+        self.hacker_mode = !self.hacker_mode;
+        self.theme = if self.hacker_mode { Theme::hacker() } else { Theme::default() };
+    }
+
+    /// Get scans sorted by status tier (ALERT > WATCH > QUIET), then LPPLS confidence desc.
     pub fn sorted_scans(&self) -> Vec<(usize, &AssetScan)> {
         let mut indexed: Vec<(usize, &AssetScan)> =
             self.scans.iter().enumerate().collect();
         indexed.sort_by(|a, b| {
-            b.1.signal
-                .probability
-                .partial_cmp(&a.1.signal.probability)
-                .unwrap_or(std::cmp::Ordering::Equal)
+            let tier = |s: &AssetScan| match s.signal.status() {
+                "ALERT" => 0,
+                "WATCH" => 1,
+                _ => 2,
+            };
+            let ta = tier(a.1);
+            let tb = tier(b.1);
+            ta.cmp(&tb).then_with(|| {
+                let la = a.1.signal.components.get("lppls_confidence").copied().unwrap_or(0.0);
+                let lb = b.1.signal.components.get("lppls_confidence").copied().unwrap_or(0.0);
+                lb.partial_cmp(&la).unwrap_or(std::cmp::Ordering::Equal)
+            })
         });
         indexed
     }
@@ -92,12 +169,13 @@ pub fn run(
 
     let mut app = App::new(config, window, days, use_cache);
 
-    // Channel for background scan results
-    let (tx, rx) = mpsc::channel::<Vec<AssetScan>>();
+    // Channel for background scan messages
+    let (tx, rx) = mpsc::channel::<ScanMsg>();
 
     // Kick off initial scan
     start_scan(&app, tx.clone());
     app.scanning = true;
+    app.scan_started = Some(Instant::now());
 
     let refresh_interval = Duration::from_secs(app.config.refresh_seconds);
     let mut last_refresh = Instant::now();
@@ -114,11 +192,24 @@ pub fn run(
             }
         })?;
 
-        // Check for background scan results (non-blocking)
-        if let Ok(scans) = rx.try_recv() {
-            app.scans = scans;
-            app.scanning = false;
-            app.last_scan = Some(chrono::Utc::now());
+        // Drain all pending scan messages (non-blocking)
+        while let Ok(msg) = rx.try_recv() {
+            match msg {
+                ScanMsg::Progress { done, total, asset } => {
+                    app.scan_done = done;
+                    app.scan_total = total;
+                    app.scan_current_asset = asset;
+                }
+                ScanMsg::Done(scans) => {
+                    app.scans = scans;
+                    app.scanning = false;
+                    app.last_scan = Some(chrono::Utc::now());
+                    app.scan_done = 0;
+                    app.scan_total = 0;
+                    app.scan_current_asset.clear();
+                    app.scan_started = None;
+                }
+            }
         }
 
         // Handle input
@@ -133,6 +224,7 @@ pub fn run(
                         if !app.scanning {
                             start_scan(&app, tx.clone());
                             app.scanning = true;
+                            app.scan_started = Some(Instant::now());
                             last_refresh = Instant::now();
                         }
                     }
@@ -185,6 +277,7 @@ pub fn run(
                         if !app.scanning {
                             start_scan(&app, tx.clone());
                             app.scanning = true;
+                            app.scan_started = Some(Instant::now());
                             last_refresh = Instant::now();
                         }
                     }
@@ -198,8 +291,12 @@ pub fn run(
                         if !app.scanning {
                             start_scan(&app, tx.clone());
                             app.scanning = true;
+                            app.scan_started = Some(Instant::now());
                             last_refresh = Instant::now();
                         }
+                    }
+                    KeyCode::Char('t') | KeyCode::Char('T') => {
+                        app.toggle_theme();
                     }
                     KeyCode::Esc | KeyCode::Backspace | KeyCode::Left | KeyCode::Char('h') => match &app.view {
                         View::Detail(_) => {
@@ -220,6 +317,7 @@ pub fn run(
         if !app.scanning && last_refresh.elapsed() >= refresh_interval {
             start_scan(&app, tx.clone());
             app.scanning = true;
+            app.scan_started = Some(Instant::now());
             last_refresh = Instant::now();
         }
     }
@@ -233,14 +331,13 @@ pub fn run(
 }
 
 /// Kick off a background scan on a separate thread.
-fn start_scan(app: &App, tx: mpsc::Sender<Vec<AssetScan>>) {
+fn start_scan(app: &App, tx: mpsc::Sender<ScanMsg>) {
     let entries = app.config.watchlist.clone();
     let window = app.window;
     let days = app.days;
     let use_cache = app.use_cache;
 
     std::thread::spawn(move || {
-        let scans = scanner::scan_watchlist(&entries, window, days, use_cache);
-        let _ = tx.send(scans);
+        scanner::scan_watchlist(&entries, window, days, use_cache, tx);
     });
 }

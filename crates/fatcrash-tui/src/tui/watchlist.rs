@@ -3,24 +3,6 @@ use ratatui::widgets::{Block, Borders, Cell, Paragraph, Row, Table};
 
 use super::App;
 
-/// Pretty-print a signal key as a human-readable name.
-fn pretty_signal_name(key: &str) -> String {
-    key.replace('_', " ")
-        .split(' ')
-        .map(|w| {
-            let mut c = w.chars();
-            match c.next() {
-                None => String::new(),
-                Some(first) => {
-                    let upper: String = first.to_uppercase().collect();
-                    upper + c.as_str()
-                }
-            }
-        })
-        .collect::<Vec<_>>()
-        .join(" ")
-}
-
 /// Render the main watchlist table view.
 pub fn render(f: &mut Frame, app: &mut App) {
     let chunks = Layout::default()
@@ -33,29 +15,49 @@ pub fn render(f: &mut Frame, app: &mut App) {
         .split(f.area());
 
     // Title bar
-    let scanning_indicator = if app.scanning { " [scanning...]" } else { "" };
+    let scanning_indicator = if app.scanning && app.scan_total > 0 {
+        let eta = format_eta(app);
+        format!(
+            " [scanning {} {}/{}{}]",
+            app.scan_current_asset, app.scan_done, app.scan_total, eta
+        )
+    } else if app.scanning {
+        " [scanning...]".to_string()
+    } else {
+        String::new()
+    };
     let title = Paragraph::new(format!(
         " fatcrash-tui  |  window={}  days={}{}",
         app.window, app.days, scanning_indicator
     ))
-    .style(Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD))
-    .block(Block::default().borders(Borders::BOTTOM));
+    .style(Style::default().fg(app.theme.title).add_modifier(Modifier::BOLD))
+    .block(Block::default().borders(Borders::BOTTOM).border_style(Style::default().fg(app.theme.border)));
     f.render_widget(title, chunks[0]);
 
     // Main table area
     if app.scans.is_empty() {
         let msg = if app.scanning {
-            "Scanning assets... please wait"
+            if app.scan_total > 0 {
+                let bar = progress_bar(app.scan_done, app.scan_total, 15);
+                let eta = format_eta(app);
+                format!(
+                    "Scanning {}... ({}/{})  {}{}\n",
+                    app.scan_current_asset, app.scan_done, app.scan_total, bar, eta
+                )
+            } else {
+                "Scanning assets... please wait".to_string()
+            }
         } else {
-            "No data yet. Press r to scan."
+            "No data yet. Press r to scan.".to_string()
         };
         let loading = Paragraph::new(msg)
             .alignment(Alignment::Center)
-            .style(Style::default().fg(Color::DarkGray).add_modifier(Modifier::ITALIC))
+            .style(Style::default().fg(app.theme.text_dim).add_modifier(Modifier::ITALIC))
             .block(
                 Block::default()
                     .title(" Watchlist ")
-                    .borders(Borders::ALL),
+                    .borders(Borders::ALL)
+                    .border_style(Style::default().fg(app.theme.border)),
             );
         f.render_widget(loading, chunks[1]);
     } else {
@@ -79,9 +81,9 @@ pub fn render(f: &mut Frame, app: &mut App) {
         let offset = app.watchlist_offset;
         let end = (offset + visible).min(total_rows);
 
-        let header_cells = ["Asset", "Sparkline", "Prob", "Level", "Top Signal", "Agreeing"]
+        let header_cells = ["Asset", "Sparkline", "LPPLS", "GSADF", "tc", "Status", "Confirms"]
             .iter()
-            .map(|h| Cell::from(*h).style(Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)));
+            .map(|h| Cell::from(*h).style(Style::default().fg(app.theme.header).add_modifier(Modifier::BOLD)));
         let header = Row::new(header_cells).height(1).bottom_margin(1);
 
         let rows: Vec<Row> = sorted_indices[offset..end]
@@ -89,33 +91,38 @@ pub fn render(f: &mut Frame, app: &mut App) {
             .enumerate()
             .map(|(vi, &orig_idx)| {
                 let scan = &app.scans[orig_idx];
-                let i = offset + vi; // actual index in sorted list
-                let prob = scan.signal.probability;
-                let level = scan.signal.level();
+                let i = offset + vi;
 
-                let level_color = match level {
-                    "CRITICAL" | "HIGH" => Color::Red,
-                    "ELEVATED" => Color::Yellow,
-                    _ => Color::Green,
+                let lppls = scan.signal.components.get("lppls_confidence").copied().unwrap_or(0.0).max(0.0);
+                let gsadf = scan.signal.components.get("gsadf_bubble").copied().unwrap_or(0.0).max(0.0);
+                let tc_days = scan.signal.horizon_days;
+
+                let status = scan.signal.status();
+                let status_color = match status {
+                    "ALERT" => app.theme.signal_high,
+                    "WATCH" => app.theme.signal_mid,
+                    _ => app.theme.signal_low,
                 };
 
-                let weights = crate::signals::default_weights();
-                let top_signal = scan
-                    .components
-                    .iter()
-                    .filter(|(_, v)| v.is_finite() && **v > 0.0)
-                    .max_by(|a, b| {
-                        let wa = weights.get(a.0.as_str()).copied().unwrap_or(0.0) * a.1;
-                        let wb = weights.get(b.0.as_str()).copied().unwrap_or(0.0) * b.1;
-                        wa.partial_cmp(&wb).unwrap_or(std::cmp::Ordering::Equal)
-                    })
-                    .map(|(k, _)| pretty_signal_name(k))
-                    .unwrap_or_else(|| "-".to_string());
+                let lppls_color = if lppls > 0.7 { app.theme.signal_high } else if lppls > 0.5 { app.theme.signal_mid } else { app.theme.signal_low };
+                let gsadf_color = if gsadf > 0.7 { app.theme.signal_high } else if gsadf > 0.5 { app.theme.signal_mid } else { app.theme.signal_low };
+
+                let tc_str = if tc_days.is_finite() && tc_days > 0.0 && lppls >= 0.3 {
+                    format!("{:.0}d", tc_days)
+                } else {
+                    "-".to_string()
+                };
+
+                let confirms_str = if status == "QUIET" {
+                    String::new()
+                } else {
+                    format!("{}/5", scan.signal.n_confirming)
+                };
 
                 let is_selected = i == app.selected;
                 let row_style = if is_selected {
                     Style::default()
-                        .bg(Color::Rgb(40, 40, 60))
+                        .bg(app.theme.selected_bg)
                         .add_modifier(Modifier::BOLD)
                 } else {
                     Style::default()
@@ -124,9 +131,9 @@ pub fn render(f: &mut Frame, app: &mut App) {
                 let spark_color = if scan.prices.len() >= 2 {
                     let first = scan.prices[0];
                     let last = scan.prices[scan.prices.len() - 1];
-                    if last >= first { Color::Green } else { Color::Red }
+                    if last >= first { app.theme.spark_up } else { app.theme.spark_down }
                 } else {
-                    Color::DarkGray
+                    app.theme.text_dim
                 };
 
                 let error_suffix = if scan.error.is_some() { " !" } else { "" };
@@ -135,11 +142,13 @@ pub fn render(f: &mut Frame, app: &mut App) {
                     Cell::from(format!("{}{}", scan.asset, error_suffix)),
                     Cell::from(sparkline_text(&scan.prices, 20))
                         .style(Style::default().fg(spark_color)),
-                    Cell::from(format!("{:.1}%", prob * 100.0))
-                        .style(Style::default().fg(level_color)),
-                    Cell::from(level).style(Style::default().fg(level_color)),
-                    Cell::from(top_signal),
-                    Cell::from(format!("{}", scan.signal.n_agreeing)),
+                    Cell::from(format!("{:.0}%", lppls * 100.0))
+                        .style(Style::default().fg(lppls_color)),
+                    Cell::from(format!("{:.2}", gsadf))
+                        .style(Style::default().fg(gsadf_color)),
+                    Cell::from(tc_str),
+                    Cell::from(status).style(Style::default().fg(status_color)),
+                    Cell::from(confirms_str),
                 ])
                 .style(row_style)
             })
@@ -148,7 +157,7 @@ pub fn render(f: &mut Frame, app: &mut App) {
         let scroll_info = if total_rows > visible {
             format!(" Watchlist ({}/{}) ", app.selected + 1, total_rows)
         } else {
-            " Watchlist (sorted by probability) ".to_string()
+            " Watchlist (ALERT > WATCH > QUIET) ".to_string()
         };
 
         let table = Table::new(
@@ -156,17 +165,19 @@ pub fn render(f: &mut Frame, app: &mut App) {
             [
                 Constraint::Length(8),  // Asset
                 Constraint::Length(22), // Sparkline
-                Constraint::Length(8),  // Prob
-                Constraint::Length(10), // Level
-                Constraint::Length(20), // Top Signal
-                Constraint::Length(9),  // Agreeing
+                Constraint::Length(7),  // LPPLS
+                Constraint::Length(7),  // GSADF
+                Constraint::Length(6),  // tc
+                Constraint::Length(7),  // Status
+                Constraint::Length(9),  // Confirms
             ],
         )
         .header(header)
         .block(
             Block::default()
                 .title(scroll_info)
-                .borders(Borders::ALL),
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(app.theme.border)),
         );
         f.render_widget(table, chunks[1]);
     }
@@ -177,13 +188,45 @@ pub fn render(f: &mut Frame, app: &mut App) {
         None => "never".to_string(),
     };
     let asset_count = app.scans.len();
+    let n_alerts = app.scans.iter().filter(|s| s.signal.status() == "ALERT").count();
+    let n_watches = app.scans.iter().filter(|s| s.signal.status() == "WATCH").count();
     let status = Paragraph::new(format!(
-        " Last scan: {}  |  {} assets  |  q=quit  r=refresh  w=window({})  d=days({})  \u{2190}\u{2192}=navigate  \u{2191}\u{2193}=select",
-        last_scan_str, asset_count, app.window, app.days
+        " Last scan: {}  |  {} assets  |  {} alerts {} watches  |  q r w d t \u{2190}\u{2192} \u{2191}\u{2193}",
+        last_scan_str, asset_count, n_alerts, n_watches
     ))
-    .style(Style::default().fg(Color::DarkGray))
-    .block(Block::default().borders(Borders::TOP));
+    .style(Style::default().fg(app.theme.text_dim))
+    .block(Block::default().borders(Borders::TOP).border_style(Style::default().fg(app.theme.border)));
     f.render_widget(status, chunks[2]);
+}
+
+/// Build a Unicode progress bar like `████████░░░░░░░`.
+fn progress_bar(done: usize, total: usize, width: usize) -> String {
+    if total == 0 {
+        return "\u{2591}".repeat(width);
+    }
+    let filled = (done * width) / total;
+    let empty = width - filled;
+    format!("{}{}", "\u{2588}".repeat(filled), "\u{2591}".repeat(empty))
+}
+
+/// Format ETA string like ` ~1m 23s remaining`, or empty if not enough data.
+fn format_eta(app: &super::App) -> String {
+    if app.scan_done == 0 {
+        return String::new();
+    }
+    let elapsed = match app.scan_started {
+        Some(t) => t.elapsed().as_secs_f64(),
+        None => return String::new(),
+    };
+    let remaining_items = app.scan_total.saturating_sub(app.scan_done);
+    let eta_secs = (elapsed * remaining_items as f64 / app.scan_done as f64) as u64;
+    let mins = eta_secs / 60;
+    let secs = eta_secs % 60;
+    if mins > 0 {
+        format!(" ~{}m {:02}s remaining", mins, secs)
+    } else {
+        format!(" ~{}s remaining", secs)
+    }
 }
 
 /// Create a text-based sparkline representation of recent prices.

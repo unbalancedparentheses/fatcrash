@@ -48,15 +48,29 @@ fn main() {
             let use_cache = !no_cache;
             if json {
                 // One-shot scan, print JSON, exit
-                let scans = scanner::scan_watchlist(&cfg.watchlist, window, days, use_cache);
+                let (tx, rx) = std::sync::mpsc::channel();
+                scanner::scan_watchlist(&cfg.watchlist, window, days, use_cache, tx);
+                let scans = loop {
+                    match rx.recv().unwrap() {
+                        scanner::ScanMsg::Progress { done, total, asset } => {
+                            eprint!("\rScanning {}... ({}/{})", asset, done, total);
+                        }
+                        scanner::ScanMsg::Done(s) => {
+                            eprintln!();
+                            break s;
+                        }
+                    }
+                };
                 let output: Vec<serde_json::Value> = scans
                     .iter()
                     .map(|s| {
                         serde_json::json!({
                             "asset": s.asset,
                             "probability": s.signal.probability,
+                            "status": s.signal.status(),
                             "level": s.signal.level(),
-                            "n_agreeing": s.signal.n_agreeing,
+                            "n_confirming": s.signal.n_confirming,
+                            "confirming_categories": s.signal.confirming_categories,
                             "components": s.signal.components,
                             "data_points": s.data_points,
                             "error": s.error,

@@ -557,11 +557,30 @@ pub fn scan_watchlist(
         Err(_) => phase1_results.into_inner().unwrap_or_default(),
     };
 
+    // Sort pairs by display order (status tier, then LPPLS desc) so GSADF fills
+    // in roughly top-to-bottom as the user sees the watchlist.
+    let mut pairs = pairs;
+    pairs.sort_by(|(a, _), (b, _)| {
+        let tier = |s: &AssetScan| match s.signal.status() {
+            "ALERT" => 0,
+            "WATCH" => 1,
+            _ => 2,
+        };
+        let ta = tier(a);
+        let tb = tier(b);
+        ta.cmp(&tb).then_with(|| {
+            let la = a.signal.components.get("lppls_confidence").copied().unwrap_or(0.0);
+            let lb = b.signal.components.get("lppls_confidence").copied().unwrap_or(0.0);
+            lb.partial_cmp(&la).unwrap_or(std::cmp::Ordering::Equal)
+        })
+    });
+
     // Send partial results (no GSADF yet) so the UI can display immediately.
     let partial_scans: Vec<AssetScan> = pairs.iter().map(|(s, _)| s.clone()).collect();
     let _ = tx.send(ScanMsg::PartialResults(partial_scans));
 
     // --- Phase 2: compute GSADF per asset, send each as it completes ---
+    // Process sequentially to match display order (top assets first).
     let counter2 = AtomicUsize::new(0);
 
     let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {

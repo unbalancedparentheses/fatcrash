@@ -1,5 +1,7 @@
 use clap::{Parser, Subcommand};
 
+#[cfg(test)]
+mod backtest;
 mod cache;
 mod config;
 mod data;

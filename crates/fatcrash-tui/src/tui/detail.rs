@@ -186,107 +186,119 @@ pub fn render(f: &mut Frame, app: &mut App, scan_idx: usize) {
         );
     f.render_widget(bubble_panel, chunks[2]);
 
-    // Expanded method table: every method grouped by category
+    // -- Confirmations: two-column layout --
     let rows_data = method_rows(app, scan_idx);
-    let total_rows = rows_data.len();
-
-    // Adjust scroll offset for method selection
-    let visible = (chunks[3].height as usize).saturating_sub(4);
-    if app.method_selected < app.detail_offset {
-        app.detail_offset = app.method_selected;
-    } else if app.method_selected >= app.detail_offset + visible && visible > 0 {
-        app.detail_offset = app.method_selected - visible + 1;
-    }
-
-    let cat_header_cells = ["Category", "Method", "Signal"]
-        .iter()
-        .map(|h| {
-            Cell::from(*h).style(
-                Style::default()
-                    .fg(app.theme.header)
-                    .add_modifier(Modifier::BOLD),
-            )
-        });
-    let cat_header = Row::new(cat_header_cells).height(1).bottom_margin(1);
-
-    let offset = app.detail_offset;
-    let end = (offset + visible).min(total_rows);
-
-    // Track which category was last shown to only display it on first row of group
-    let mut last_cat = "";
-    // Need to scan from start to know which categories appeared before offset
-    for (cat, _, _) in &rows_data[..offset] {
-        last_cat = cat;
-    }
-
-    let cat_rows: Vec<Row> = rows_data[offset..end]
-        .iter()
-        .enumerate()
-        .map(|(vi, (cat_name, method_key, signal))| {
-            let i = offset + vi;
-
-            let cat_display = if *cat_name != last_cat {
-                last_cat = cat_name;
-                *cat_name
-            } else {
-                ""
-            };
-
-            let sig_color = if *signal > 0.7 {
-                app.theme.signal_high
-            } else if *signal > 0.5 {
-                app.theme.signal_mid
-            } else if *signal > 0.01 {
-                app.theme.text
-            } else {
-                app.theme.text_dim
-            };
-
-            let is_selected = i == app.method_selected;
-            let row_style = if is_selected {
-                Style::default().bg(app.theme.selected_bg).add_modifier(Modifier::BOLD)
-            } else {
-                Style::default()
-            };
-
-            Row::new(vec![
-                Cell::from(cat_display).style(Style::default().fg(app.theme.title)),
-                Cell::from(pretty_name(method_key)),
-                Cell::from(format!("{:.2}", signal)).style(Style::default().fg(sig_color)),
-            ])
-            .style(row_style)
-        })
-        .collect();
 
     let details = signals::category_details(&scan.components);
     let n_confirming = details.iter().filter(|(_, v, _)| *v > 0.5).count();
-    let confirming_names: Vec<&str> = details.iter()
+    let confirming_names: Vec<&str> = details
+        .iter()
         .filter(|(_, v, _)| *v > 0.5)
         .map(|(name, _, _)| *name)
         .collect();
 
     let confirm_summary = if n_confirming > 0 {
-        format!(" Confirmations: {}/5 ({}) ", n_confirming, confirming_names.join(", "))
+        format!(
+            " Confirmations: {}/5 ({}) ",
+            n_confirming,
+            confirming_names.join(", ")
+        )
     } else {
         " Confirmations: 0/5 ".to_string()
     };
 
-    let cat_table = Table::new(
-        cat_rows,
-        [
-            Constraint::Length(15), // Category
-            Constraint::Length(24), // Method
-            Constraint::Length(8),  // Signal
-        ],
-    )
-    .header(cat_header)
-    .block(
-        Block::default()
-            .title(confirm_summary)
-            .borders(Borders::ALL)
-            .border_style(Style::default().fg(app.theme.border)),
-    );
-    f.render_widget(cat_table, chunks[3]);
+    // Outer block with summary title
+    let outer_block = Block::default()
+        .title(confirm_summary)
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(app.theme.border));
+    let inner = outer_block.inner(chunks[3]);
+    f.render_widget(outer_block, chunks[3]);
+
+    // Split into left column | 1-char separator | right column
+    let cols = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([
+            Constraint::Percentage(50),
+            Constraint::Length(1),
+            Constraint::Percentage(50),
+        ])
+        .split(inner);
+
+    // Render vertical separator
+    let sep_lines: String = (0..cols[1].height)
+        .map(|_| "\u{2502}")
+        .collect::<Vec<_>>()
+        .join("\n");
+    let sep = Paragraph::new(sep_lines).style(Style::default().fg(app.theme.border));
+    f.render_widget(sep, cols[1]);
+
+    // Assign categories to columns: left = Tail risk + Momentum, right = rest
+    let left_cats = ["Tail risk", "Momentum"];
+
+    let mut left_rows: Vec<Row> = Vec::new();
+    let mut right_rows: Vec<Row> = Vec::new();
+    let mut last_left_cat = "";
+    let mut last_right_cat = "";
+
+    for (flat_idx, (cat_name, method_key, signal)) in rows_data.iter().enumerate() {
+        let is_left = left_cats.contains(cat_name);
+        let (rows, last_cat) = if is_left {
+            (&mut left_rows, &mut last_left_cat)
+        } else {
+            (&mut right_rows, &mut last_right_cat)
+        };
+
+        // Category header row when category changes
+        if *cat_name != *last_cat {
+            *last_cat = cat_name;
+            rows.push(
+                Row::new(vec![
+                    Cell::from(format!(" {}", cat_name)).style(
+                        Style::default()
+                            .fg(app.theme.title)
+                            .add_modifier(Modifier::BOLD | Modifier::UNDERLINED),
+                    ),
+                    Cell::from(""),
+                ]),
+            );
+        }
+
+        // Method row
+        let sig_color = if *signal > 0.7 {
+            app.theme.signal_high
+        } else if *signal > 0.5 {
+            app.theme.signal_mid
+        } else if *signal > 0.01 {
+            app.theme.text
+        } else {
+            app.theme.text_dim
+        };
+
+        let is_selected = flat_idx == app.method_selected;
+        let row_style = if is_selected {
+            Style::default()
+                .bg(app.theme.selected_bg)
+                .add_modifier(Modifier::BOLD)
+        } else {
+            Style::default()
+        };
+
+        rows.push(
+            Row::new(vec![
+                Cell::from(format!("  {}", pretty_name(method_key))),
+                Cell::from(format!("{:.2}", signal))
+                    .style(Style::default().fg(sig_color)),
+            ])
+            .style(row_style),
+        );
+    }
+
+    let col_widths = [Constraint::Fill(1), Constraint::Length(6)];
+    let left_table = Table::new(left_rows, col_widths);
+    f.render_widget(left_table, cols[0]);
+    let right_table = Table::new(right_rows, col_widths);
+    f.render_widget(right_table, cols[2]);
 
     // Footer
     let error_str = match &scan.error {

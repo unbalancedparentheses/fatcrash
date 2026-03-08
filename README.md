@@ -633,13 +633,35 @@ cargo run -p fatcrash-tui -- monitor --json --no-cache  # one-shot JSON output
 cargo run -p fatcrash-tui -- cache-clear                # clear cached data
 ```
 
-**Three views:** Watchlist (sorted by crash probability) → Asset detail (all 18 methods with signal values, detection status, weights) → Method drill-down (raw intermediate values).
+**Bubble-first dashboard.** LPPLS and GSADF are the only real crash screeners — everything else confirms or denies their signal.
+
+**Watchlist view** — per asset: sparkline, LPPLS confidence (0-100%), GSADF stat/CV ratio, days to critical time, status (QUIET/WATCH/ALERT), and confirmation count (N/5). Sorted by status tier (ALERT > WATCH > QUIET), then LPPLS confidence descending.
+
+| Status | Condition |
+|--------|-----------|
+| QUIET | LPPLS < 0.3 and GSADF < 0.5 |
+| WATCH | LPPLS >= 0.3 or GSADF stat >= CV |
+| ALERT | LPPLS >= 0.5 and >= 2 confirmation categories agree |
+
+**Detail view** — bubble panel (LPPLS confidence, tc estimate, tc std dev, GSADF statistic, 95% CV, excess) + 5 confirmation categories:
+
+| Category | Signals | What it confirms |
+|----------|---------|-----------------|
+| Tail risk | Kappa, Taleb kappa, Hill, Pickands, DEH, QQ, MaxSum, GPD, Skewness | Tail thickening |
+| Regime shift | Hamilton, CSD, RV spike, DFA, Hurst, Spectral | Regime transition |
+| Liquidity | Amihud | Liquidity dry-up |
+| Jump risk | BNS jump test | Discontinuous dynamics |
+| Momentum | Momentum reversal, Velocity, Multiscale | Trend exhaustion |
+
+Each category takes the max of its constituent signals. Color: red > 0.7, yellow > 0.5, green <= 0.5. Summary: "3/5 categories confirm".
+
+**Method drill-down** — description + raw intermediate values (unchanged).
 
 **Keyboard:** `j/k` or arrows to navigate, `Enter/l` to drill down, `Esc/h` to go back, `r` to refresh, `w` to cycle window (60/90/120/180/252), `d` to cycle history days (180/365/730/1095), `q` to quit.
 
 **Data:** Yahoo Finance (equities, futures, forex) and CoinGecko (crypto). CSV cache in `~/.cache/fatcrash/` with 24h expiry. Auto-refresh every 5 minutes. Background scanning (never blocks UI).
 
-**Signal aggregation:** LPPLS-first architecture. If neither LPPLS confidence nor GSADF detects a bubble (both < 0.1), crash probability is zero. When a bubble signal fires, other methods (tail, regime, liquidity) act as confirmation/denial multipliers.
+**Signal aggregation:** LPPLS-first with category-max confirmation. If neither LPPLS confidence nor GSADF detects a bubble (both < 0.1), crash probability is zero. When a bubble signal fires, 5 confirmation categories (each using max of constituent signals) scale the probability: `probability = bubble_score * (0.4 + 0.12 * n_confirming)`. This prevents correlated signals (e.g., Hill, Pickands, DEH, QQ all measuring tail thickness) from stacking votes.
 
 ## Data Sources
 

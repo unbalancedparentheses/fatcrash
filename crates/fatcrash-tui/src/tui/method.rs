@@ -186,6 +186,22 @@ fn method_description(key: &str) -> &'static str {
             "Signal = geometric mean of per-scale signals, where each scale maps alpha to (1 - alpha/5). ",
             "Agreement across all three scales is strong evidence of genuine power-law tails, not artifacts.",
         ),
+        "realized_skewness" => concat!(
+            "Realized skewness (Neuberger 2012). Computes the third central moment of returns normalized by realized variance^{3/2}, ",
+            "using model-free realized moments rather than sample skewness. Negative skewness indicates asymmetric left-tail risk: ",
+            "large negative returns are more frequent/severe than positive ones. ",
+            "Skew < -0.5 is moderate crash risk, skew < -1.0 is severe. ",
+            "This is a direct measure of crash asymmetry — it fires when the return distribution develops a left tail ",
+            "that standard volatility measures miss. Signal = clamp(-skew, 0, 1).",
+        ),
+        "gpd_var_exceedance" => concat!(
+            "GPD VaR/ES exceedance (Extreme Value Theory). Fits a Generalized Pareto Distribution to the tail of losses ",
+            "beyond the 95th percentile threshold, then extrapolates to 99% VaR and Expected Shortfall. ",
+            "GPD is theoretically justified by the Pickands-Balkema-de Haan theorem: exceedances over a high threshold ",
+            "converge to GPD regardless of the parent distribution. ",
+            "Signal fires when the current period's loss exceeds the GPD-estimated VaR — meaning the market is in ",
+            "the extreme tail that even the EVT model considers rare. VaR exceedance ratio maps to [0,1].",
+        ),
         "mlnn_signal" | "plnn_signal" => "Neural network bubble detector (M-LNN / P-LNN). These require trained PyTorch models and are only available via the Python interface. In TUI mode, they always return NaN.",
         _ => "No description available for this method.",
     }
@@ -255,9 +271,9 @@ pub fn render(f: &mut Frame, app: &App, scan_idx: usize, method_key: &str) {
         None => "-",
     };
     let det_color = match detected {
-        Some(true) => Color::Red,
-        Some(false) => Color::Green,
-        None => Color::DarkGray,
+        Some(true) => app.theme.signal_high,
+        Some(false) => app.theme.signal_low,
+        None => app.theme.text_dim,
     };
 
     let sig_str = if signal_val.is_nan() { "-".to_string() } else { format!("{:.4}", signal_val) };
@@ -265,7 +281,7 @@ pub fn render(f: &mut Frame, app: &App, scan_idx: usize, method_key: &str) {
     let header_text = Line::from(vec![
         Span::styled(
             format!(" {} ", pretty_name(method_key)),
-            Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
+            Style::default().fg(app.theme.title).add_modifier(Modifier::BOLD),
         ),
         Span::raw(" | "),
         Span::raw(format!("Signal: {} ", sig_str)),
@@ -279,19 +295,19 @@ pub fn render(f: &mut Frame, app: &App, scan_idx: usize, method_key: &str) {
         Span::raw(format!("Asset: {}", scan.asset)),
     ]);
     let header = Paragraph::new(header_text)
-        .block(Block::default().borders(Borders::BOTTOM));
+        .block(Block::default().borders(Borders::BOTTOM).border_style(Style::default().fg(app.theme.border)));
     f.render_widget(header, chunks[0]);
 
     // Description
     let desc = method_description(method_key);
     let desc_widget = Paragraph::new(desc)
         .wrap(Wrap { trim: true })
-        .style(Style::default().fg(Color::White))
+        .style(Style::default().fg(app.theme.text))
         .block(
             Block::default()
                 .title(" What is this? ")
                 .borders(Borders::ALL)
-                .border_style(Style::default().fg(Color::DarkGray)),
+                .border_style(Style::default().fg(app.theme.text_dim)),
         );
     f.render_widget(desc_widget, chunks[1]);
 
@@ -304,7 +320,7 @@ pub fn render(f: &mut Frame, app: &App, scan_idx: usize, method_key: &str) {
             .map(|h| {
                 Cell::from(*h).style(
                     Style::default()
-                        .fg(Color::Yellow)
+                        .fg(app.theme.header)
                         .add_modifier(Modifier::BOLD),
                 )
             });
@@ -324,9 +340,9 @@ pub fn render(f: &mut Frame, app: &App, scan_idx: usize, method_key: &str) {
                 };
 
                 let val_color = if val.is_nan() || val.is_infinite() {
-                    Color::DarkGray
+                    app.theme.text_dim
                 } else {
-                    Color::White
+                    app.theme.text
                 };
 
                 Row::new(vec![
@@ -344,16 +360,18 @@ pub fn render(f: &mut Frame, app: &App, scan_idx: usize, method_key: &str) {
         .block(
             Block::default()
                 .title(" Raw Values ")
-                .borders(Borders::ALL),
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(app.theme.border)),
         );
         f.render_widget(table, chunks[2]);
     } else {
         let no_data = Paragraph::new(" No raw values recorded for this method.")
-            .style(Style::default().fg(Color::DarkGray))
+            .style(Style::default().fg(app.theme.text_dim))
             .block(
                 Block::default()
                     .title(" Raw Values ")
-                    .borders(Borders::ALL),
+                    .borders(Borders::ALL)
+                    .border_style(Style::default().fg(app.theme.border)),
             );
         f.render_widget(no_data, chunks[2]);
     }
@@ -363,7 +381,7 @@ pub fn render(f: &mut Frame, app: &App, scan_idx: usize, method_key: &str) {
         " \u{2190}=back to {}  r=refresh  q=quit",
         scan.asset
     ))
-    .style(Style::default().fg(Color::DarkGray))
-    .block(Block::default().borders(Borders::TOP));
+    .style(Style::default().fg(app.theme.text_dim))
+    .block(Block::default().borders(Borders::TOP).border_style(Style::default().fg(app.theme.border)));
     f.render_widget(footer, chunks[3]);
 }

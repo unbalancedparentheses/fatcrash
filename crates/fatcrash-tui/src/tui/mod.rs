@@ -74,8 +74,6 @@ pub struct App {
     pub use_cache: bool,
     /// Scroll offset for the watchlist table.
     pub watchlist_offset: usize,
-    /// Scroll offset for the detail methods table.
-    pub detail_offset: usize,
     pub theme: Theme,
     /// Scan progress tracking.
     pub scan_done: usize,
@@ -100,7 +98,6 @@ impl App {
             days,
             use_cache,
             watchlist_offset: 0,
-            detail_offset: 0,
             theme: Theme::default(),
             scan_done: 0,
             scan_total: 0,

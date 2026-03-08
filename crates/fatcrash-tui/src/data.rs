@@ -33,12 +33,31 @@ pub fn fetch(source: &DataSource, days: usize) -> Result<Vec<OhlcvBar>, String> 
     }
 }
 
+#[cfg(test)]
+pub fn fetch_range(source: &DataSource, start: NaiveDate, end: NaiveDate) -> Result<Vec<OhlcvBar>, String> {
+    match source {
+        DataSource::Yahoo { ticker } => fetch_yahoo_range(ticker, start, end),
+        DataSource::CoinGecko { .. } => Err("CoinGecko range fetch not supported".into()),
+    }
+}
+
 fn fetch_yahoo(ticker: &str, days: usize) -> Result<Vec<OhlcvBar>, String> {
     let now = chrono::Utc::now().timestamp();
-    let period1 = now - (days as i64 + 30) * 86400; // extra buffer
+    let period1 = now - (days as i64 + 30) * 86400;
+    fetch_yahoo_timestamps(ticker, period1, now)
+}
+
+#[cfg(test)]
+fn fetch_yahoo_range(ticker: &str, start: NaiveDate, end: NaiveDate) -> Result<Vec<OhlcvBar>, String> {
+    let period1 = start.and_hms_opt(0, 0, 0).unwrap().and_utc().timestamp();
+    let period2 = end.and_hms_opt(23, 59, 59).unwrap().and_utc().timestamp();
+    fetch_yahoo_timestamps(ticker, period1, period2)
+}
+
+fn fetch_yahoo_timestamps(ticker: &str, period1: i64, period2: i64) -> Result<Vec<OhlcvBar>, String> {
     let url = format!(
         "https://query1.finance.yahoo.com/v8/finance/chart/{}?period1={}&period2={}&interval=1d",
-        ticker, period1, now
+        ticker, period1, period2
     );
     let client = reqwest::blocking::Client::builder()
         .user_agent("fatcrash/0.1")

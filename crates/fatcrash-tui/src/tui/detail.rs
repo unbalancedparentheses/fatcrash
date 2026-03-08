@@ -23,6 +23,14 @@ fn pretty_name(key: &str) -> String {
         .join(" ")
 }
 
+/// Build a signal bar like `████████░░` for a 0.0–1.0 value.
+fn signal_bar(value: f64, width: usize) -> String {
+    let clamped = value.clamp(0.0, 1.0);
+    let filled = (clamped * width as f64).round() as usize;
+    let empty = width - filled;
+    format!("{}{}", "\u{2588}".repeat(filled), "\u{2591}".repeat(empty))
+}
+
 /// Build the flat list of (category_name, method_key, signal_value) for display.
 /// Categories are sorted by their max signal value (hottest first).
 /// Methods within each category are sorted by signal value descending.
@@ -96,12 +104,20 @@ pub fn render(f: &mut Frame, app: &mut App, scan_idx: usize) {
         _ => app.theme.signal_low,
     };
 
+    let gsadf_header = if app.gsadf_computing.contains(&scan.asset) {
+        "  |  GSADF: computing..."
+    } else if scan.components.contains_key("gsadf_bubble") {
+        ""
+    } else {
+        "  |  GSADF: press g"
+    };
     let header_text = format!(
-        " {}  |  Status: {}  |  Confirms: {}/5  |  Data points: {}",
+        " {}  |  Status: {}  |  Confirms: {}/5  |  Data points: {}{}",
         scan.asset,
         status,
         scan.signal.n_confirming,
         scan.data_points,
+        gsadf_header,
     );
     let header = Paragraph::new(header_text)
         .style(
@@ -187,33 +203,44 @@ pub fn render(f: &mut Frame, app: &mut App, scan_idx: usize) {
         if v.is_nan() || v.is_infinite() { "-".to_string() } else { format!("{:.2}", v) }
     };
 
-    let bubble_text = vec![
-        Line::from(vec![
-            Span::raw(" LPPLS: "),
-            Span::styled(format!("{:.0}%", lppls * 100.0), Style::default().fg(lppls_color).add_modifier(Modifier::BOLD)),
-            Span::raw(format!("  tc: {}d", fmt_f(tc_days))),
+    let dim = Style::default().fg(app.theme.text_dim);
+    let is_computing_gsadf = app.gsadf_computing.contains(&scan.asset);
+    let gsadf_row = if is_computing_gsadf {
+        Row::new(vec![
+            Cell::from("GSADF").style(dim),
+            Cell::from("computing...").style(Style::default().fg(app.theme.signal_mid).add_modifier(Modifier::BOLD)),
+            Cell::from(""),
+            Cell::from(""),
+        ])
+    } else {
+        Row::new(vec![
+            Cell::from("GSADF").style(dim),
+            Cell::from(fmt_f(gsadf_stat)).style(Style::default().fg(gsadf_color).add_modifier(Modifier::BOLD)),
+            Cell::from(format!("CV: {}", fmt_f(gsadf_cv))),
+            Cell::from(format!("ex: {}", fmt_f(gsadf_excess))).style(dim),
+        ])
+    };
+    let bubble_rows = vec![
+        Row::new(vec![
+            Cell::from("LPPLS").style(dim),
+            Cell::from(format!("{:.0}%", lppls * 100.0)).style(Style::default().fg(lppls_color).add_modifier(Modifier::BOLD)),
+            Cell::from(format!("tc: {}", fmt_f(tc_days))),
+            Cell::from(format!("\u{00b1}{}", fmt_f(tc_std))).style(dim),
         ]),
-        Line::from(vec![
-            Span::raw(format!(" tc std: {}", fmt_f(tc_std))),
-        ]),
-        Line::from(vec![
-            Span::raw(" GSADF: "),
-            Span::styled(fmt_f(gsadf_stat), Style::default().fg(gsadf_color).add_modifier(Modifier::BOLD)),
-            Span::raw(format!("  CV: {}", fmt_f(gsadf_cv))),
-        ]),
-        Line::from(vec![
-            Span::raw(format!(" excess: {}", fmt_f(gsadf_excess))),
-        ]),
+        gsadf_row,
     ];
 
-    let bubble_panel = Paragraph::new(bubble_text)
-        .block(
-            Block::default()
-                .title(" Bubble Detectors ")
-                .borders(Borders::ALL)
-                .border_style(Style::default().fg(app.theme.title)),
-        );
-    f.render_widget(bubble_panel, top_cols[1]);
+    let bubble_table = Table::new(
+        bubble_rows,
+        [Constraint::Length(6), Constraint::Length(6), Constraint::Length(10), Constraint::Fill(1)],
+    )
+    .block(
+        Block::default()
+            .title(" Bubble Detectors ")
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(app.theme.title)),
+    );
+    f.render_widget(bubble_table, top_cols[1]);
 
     // -- Confirmations: single-column with scrolling --
     let rows_data = method_rows(app, scan_idx);
@@ -252,6 +279,7 @@ pub fn render(f: &mut Frame, app: &mut App, scan_idx: usize) {
                             .add_modifier(Modifier::BOLD | Modifier::UNDERLINED),
                     ),
                     Cell::from(""),
+                    Cell::from(""),
                 ]),
                 None,
             ));
@@ -268,6 +296,8 @@ pub fn render(f: &mut Frame, app: &mut App, scan_idx: usize) {
         };
 
         let is_selected = flat_idx == app.method_selected;
+        let is_zero = *signal < 0.01;
+        let name_color = if is_zero { app.theme.text_dim } else { app.theme.text };
         let row_style = if is_selected {
             Style::default()
                 .bg(app.theme.selected_bg)
@@ -276,10 +306,14 @@ pub fn render(f: &mut Frame, app: &mut App, scan_idx: usize) {
             Style::default()
         };
 
+        let bar = signal_bar(*signal, 10);
+
         all_rows.push((
             Row::new(vec![
-                Cell::from(format!("  {}", pretty_name(method_key))),
-                Cell::from(format!("{:.2}", signal))
+                Cell::from(format!("  {}", pretty_name(method_key)))
+                    .style(Style::default().fg(name_color)),
+                Cell::from(bar).style(Style::default().fg(sig_color)),
+                Cell::from(if is_zero { "\u{00b7}".to_string() } else { format!("{:.2}", signal) })
                     .style(Style::default().fg(sig_color)),
             ])
             .style(row_style),
@@ -313,7 +347,7 @@ pub fn render(f: &mut Frame, app: &mut App, scan_idx: usize) {
 
     let table = Table::new(
         visible_rows,
-        [Constraint::Fill(1), Constraint::Length(6)],
+        [Constraint::Fill(1), Constraint::Length(10), Constraint::Length(6)],
     )
     .block(
         Block::default()

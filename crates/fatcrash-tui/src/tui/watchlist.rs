@@ -1,6 +1,8 @@
 use ratatui::prelude::*;
 use ratatui::widgets::{Block, Borders, Cell, Paragraph, Row, Table};
 
+use crate::signals;
+
 use super::App;
 
 /// Render the main watchlist table view.
@@ -35,6 +37,15 @@ pub fn render(f: &mut Frame, app: &mut App) {
     .block(Block::default().borders(Borders::BOTTOM).border_style(Style::default().fg(app.theme.border)));
     f.render_widget(title, chunks[0]);
 
+    // Split main area: table (left) + summary panel (right)
+    let main_cols = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([
+            Constraint::Min(70),
+            Constraint::Length(34),
+        ])
+        .split(chunks[1]);
+
     // Main table area
     if app.scans.is_empty() {
         let msg = if app.scanning {
@@ -60,7 +71,8 @@ pub fn render(f: &mut Frame, app: &mut App) {
                     .borders(Borders::ALL)
                     .border_style(Style::default().fg(app.theme.border)),
             );
-        f.render_widget(loading, chunks[1]);
+        f.render_widget(loading, main_cols[0]);
+        render_summary_panel(f, app, main_cols[1]);
     } else {
         // Collect sorted indices to avoid holding borrow on app
         let sorted_indices: Vec<usize> = {
@@ -70,7 +82,7 @@ pub fn render(f: &mut Frame, app: &mut App) {
         let total_rows = sorted_indices.len();
 
         // Compute visible rows: table area height - borders(2) - header(1) - header margin(1)
-        let visible = (chunks[1].height as usize).saturating_sub(4);
+        let visible = (main_cols[0].height as usize).saturating_sub(4);
 
         // Adjust scroll offset to keep selection visible
         if app.selected < app.watchlist_offset {
@@ -206,7 +218,10 @@ pub fn render(f: &mut Frame, app: &mut App) {
                 .borders(Borders::ALL)
                 .border_style(Style::default().fg(app.theme.border)),
         );
-        f.render_widget(table, chunks[1]);
+        f.render_widget(table, main_cols[0]);
+
+        // Summary panel for selected asset
+        render_summary_panel(f, app, main_cols[1]);
     }
 
     // Status bar
@@ -229,6 +244,122 @@ pub fn render(f: &mut Frame, app: &mut App) {
     .style(Style::default().fg(app.theme.text_dim))
     .block(Block::default().borders(Borders::TOP).border_style(Style::default().fg(app.theme.border)));
     f.render_widget(status, chunks[2]);
+}
+
+/// Render the summary panel showing top firing signals for the selected asset.
+fn render_summary_panel(f: &mut Frame, app: &App, area: Rect) {
+    let sorted = app.sorted_scans();
+    let scan = sorted.get(app.selected).map(|(_, s)| *s);
+
+    let scan = match scan {
+        Some(s) => s,
+        None => {
+            let empty = Paragraph::new("")
+                .block(Block::default().title(" Preview ").borders(Borders::ALL)
+                    .border_style(Style::default().fg(app.theme.border)));
+            f.render_widget(empty, area);
+            return;
+        }
+    };
+
+    // Gather all methods sorted by signal value descending.
+    let cats = signals::confirmation_categories();
+    let mut all_methods: Vec<(&str, f64)> = Vec::new();
+    for (_cat_name, keys) in &cats {
+        for key in keys {
+            let val = scan.components.get(*key).copied().unwrap_or(0.0).max(0.0);
+            all_methods.push((key, val));
+        }
+    }
+    all_methods.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+
+    // Show signals > 0.3, up to what fits.
+    let max_lines = (area.height as usize).saturating_sub(3);
+    let mut lines: Vec<Line> = Vec::new();
+
+    for (key, val) in all_methods.iter().take(max_lines) {
+        if *val < 0.3 {
+            break;
+        }
+        let sig_color = if *val > 0.7 {
+            app.theme.signal_high
+        } else if *val > 0.5 {
+            app.theme.signal_mid
+        } else {
+            app.theme.text
+        };
+
+        let name = short_method_name(key);
+        let bar_width = 10;
+        let filled = (val.clamp(0.0, 1.0) * bar_width as f64).round() as usize;
+        let bar: String = format!(
+            "{}{}",
+            "\u{2588}".repeat(filled),
+            "\u{2591}".repeat(bar_width - filled)
+        );
+
+        lines.push(Line::from(vec![
+            Span::styled(format!(" {bar} "), Style::default().fg(sig_color)),
+            Span::styled(format!("{:.0}%", val * 100.0), Style::default().fg(sig_color).add_modifier(Modifier::BOLD)),
+            Span::raw(" "),
+            Span::raw(name),
+        ]));
+    }
+
+    if lines.is_empty() {
+        lines.push(Line::from(
+            Span::styled(" No signals > 30%", Style::default().fg(app.theme.text_dim)),
+        ));
+    }
+
+    let status = scan.signal.status();
+    let status_color = match status {
+        "ALERT" => app.theme.signal_high,
+        "WATCH" => app.theme.signal_mid,
+        _ => app.theme.signal_low,
+    };
+
+    let panel = Paragraph::new(lines)
+        .block(
+            Block::default()
+                .title(Span::styled(
+                    format!(" {} {} ", scan.asset, status),
+                    Style::default().fg(status_color).add_modifier(Modifier::BOLD),
+                ))
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(app.theme.border)),
+        );
+    f.render_widget(panel, area);
+}
+
+/// Short human-readable name for a method key, fitting in ~14 chars.
+fn short_method_name(key: &str) -> &'static str {
+    match key {
+        "hill_thinning" => "Hill",
+        "kappa_regime" => "Kappa",
+        "taleb_kappa" => "Taleb Kappa",
+        "pickands_thinning" => "Pickands",
+        "deh_thinning" => "DEH",
+        "qq_thinning" => "QQ",
+        "maxsum_signal" => "MaxSum",
+        "gpd_var_exceedance" => "GPD VaR",
+        "realized_skewness" => "Skewness",
+        "hurst_trending" => "Hurst",
+        "dfa_trending" => "DFA",
+        "spectral_memory" => "Spectral",
+        "hamilton_stress" => "Hamilton",
+        "csd_warning" => "CSD",
+        "rv_spike" => "RV Spike",
+        "velocity_spike" => "Velocity",
+        "amihud_spike" => "Amihud",
+        "momentum_reversal" => "Momentum",
+        "multiscale" => "Multiscale",
+        "lppls_confidence" => "LPPLS",
+        "lppls_tc_proximity" => "tc Proximity",
+        "gsadf_bubble" => "GSADF",
+        "jump_risk_signal" => "Jump Risk",
+        _ => "?",
+    }
 }
 
 /// Build a Unicode progress bar like `████████░░░░░░░`.

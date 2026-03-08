@@ -36,6 +36,49 @@ cargo run -p fatcrash-tui -- monitor --json --no-cache
 
 > **DISCLAIMER:** This software is for academic research and educational purposes only. It does not constitute financial advice. No warranty is provided regarding the accuracy of predictions. Do not use for investment decisions.
 
+## Setup
+
+Requires Rust (stable) and Python 3.11+. Nix users get everything via `nix develop`.
+
+### Rust TUI (standalone, no Python needed)
+
+```bash
+cargo build --release -p fatcrash-tui
+./target/release/fatcrash-tui monitor
+```
+
+### Python package (needs Rust for the native extension)
+
+```bash
+# With nix (handles Rust + Python + maturin):
+nix develop
+uv pip install -e ".[dev]"
+
+# Without nix:
+pip install maturin
+maturin develop --release
+pip install -e ".[dev]"
+
+# NN methods (LPPLS neural network fitting):
+pip install -e ".[deep]"
+```
+
+### Workspace structure
+
+Cargo workspace with 3 crates. `fatcrash-core` is pure Rust with no FFI — the TUI and Python bindings both depend on it.
+
+```
+Cargo.toml              # workspace root
+crates/
+  fatcrash-core/        # all estimators and algorithms (rayon, nalgebra, rand)
+  fatcrash-tui/         # terminal dashboard (ratatui, crossterm, clap, reqwest)
+  fatcrash-py/          # thin PyO3 wrappers → fatcrash._core
+pyproject.toml          # maturin build, Python deps (numpy, pandas, polars, etc.)
+python/                 # Python package (indicators, CLI, viz, NN)
+```
+
+Key Rust dependencies: `rayon` (parallelism for CMA-ES, GSADF, Hamilton EM), `nalgebra` (linear algebra), `ratatui`/`crossterm` (TUI), `reqwest` (Yahoo Finance / CoinGecko HTTP), `pyo3`/`numpy` (Python bindings). Release profile uses LTO and single codegen unit.
+
 ## Why This Exists
 
 ### The ergodicity problem

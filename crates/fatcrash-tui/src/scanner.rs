@@ -19,7 +19,9 @@ pub enum ScanMsg {
         total: usize,
         asset: String,
     },
-    /// All assets done.
+    /// Phase 1 done: all methods except GSADF computed.
+    PartialResults(Vec<AssetScan>),
+    /// Phase 2 done: everything including GSADF.
     Done(Vec<AssetScan>),
 }
 
@@ -66,13 +68,47 @@ fn error_scan(asset: &str, now: chrono::DateTime<Utc>, err: &str) -> AssetScan {
     }
 }
 
+/// Compute GSADF bubble signal from log prices.
+/// Returns `(signal_value, raw_values_vec)` for merging into an `AssetScan`.
+pub fn compute_gsadf(log_prices: &[f64]) -> (f64, Vec<(String, f64)>) {
+    let mut gsadf_stat = f64::NAN;
+    let mut gsadf_cv = f64::NAN;
+    let sig = safe_call(|| {
+        let (stat, _, (_, cv95, _)) =
+            fatcrash_core::bubble::gsadf::gsadf_test_slice(log_prices, None, Some(100), Some(42));
+        gsadf_stat = stat;
+        gsadf_cv = cv95;
+        signals::gsadf_signal(stat, cv95)
+    });
+    let raw = vec![
+        ("GSADF statistic".into(), gsadf_stat),
+        ("95% critical value".into(), gsadf_cv),
+        ("Excess over CV".into(), gsadf_stat - gsadf_cv),
+    ];
+    (sig, raw)
+}
+
 /// Scan a single asset: fetch data, run all methods, produce aggregated signal.
+#[allow(dead_code)]
 pub fn scan_asset(
     entry: &WatchlistEntry,
     window: usize,
     days: usize,
     use_cache: bool,
 ) -> AssetScan {
+    let (scan, _log_prices) = scan_asset_inner(entry, window, days, use_cache, true);
+    scan
+}
+
+/// Inner scan: runs all methods. When `run_gsadf` is false, skips GSADF and returns
+/// the log-prices so the caller can run `compute_gsadf` later.
+fn scan_asset_inner(
+    entry: &WatchlistEntry,
+    window: usize,
+    days: usize,
+    use_cache: bool,
+    run_gsadf: bool,
+) -> (AssetScan, Vec<f64>) {
     let now = Utc::now();
     let source_str = entry.source.to_string();
     let scope = format!("{}d", days);
@@ -87,13 +123,13 @@ pub fn scan_asset(
                     cache::save_cache(&source_str, &entry.symbol, &scope, &b);
                     b
                 }
-                Err(e) => return error_scan(&entry.symbol, now, &e),
+                Err(e) => return (error_scan(&entry.symbol, now, &e), vec![]),
             }
         }
     } else {
         match data::fetch(&entry.source, days) {
             Ok(b) => b,
-            Err(e) => return error_scan(&entry.symbol, now, &e),
+            Err(e) => return (error_scan(&entry.symbol, now, &e), vec![]),
         }
     };
 
@@ -105,17 +141,17 @@ pub fn scan_asset(
     let data_points = close_prices.len();
 
     if data_points < 270 {
-        return error_scan(
+        return (error_scan(
             &entry.symbol,
             now,
             &format!("Insufficient data: {} bars (need 270+)", data_points),
-        );
+        ), vec![]);
     }
 
     // Compute log returns via fatcrash_core
     let returns = match fatcrash_core::utils::log_returns_slice(&close_prices) {
         Ok(r) => r,
-        Err(e) => return error_scan(&entry.symbol, now, &format!("Log returns: {}", e)),
+        Err(e) => return (error_scan(&entry.symbol, now, &format!("Log returns: {}", e)), vec![]),
     };
 
     let n = returns.len();
@@ -125,7 +161,7 @@ pub fn scan_asset(
     let base_start = base_end.saturating_sub(window);
 
     if pre_start >= pre_end || base_start >= base_end {
-        return error_scan(&entry.symbol, now, "Window yields empty slices");
+        return (error_scan(&entry.symbol, now, "Window yields empty slices"), vec![]);
     }
 
     let pre = &returns[pre_start..pre_end];
@@ -409,21 +445,12 @@ pub fn scan_asset(
     ]);
 
     // 18. GSADF bubble — uses fatcrash-core with Monte Carlo critical values
-    let mut gsadf_stat = f64::NAN;
-    let mut gsadf_cv = f64::NAN;
-    let gsadf_sig = safe_call(|| {
-        let log_p: Vec<f64> = pre_prices.iter().filter_map(|p| if *p > 0.0 { Some(p.ln()) } else { None }).collect();
-        let (stat, _, (_, cv95, _)) =
-            fatcrash_core::bubble::gsadf::gsadf_test_slice(&log_p, None, Some(500), Some(42));
-        gsadf_stat = stat;
-        gsadf_cv = cv95;
-        signals::gsadf_signal(stat, cv95)
-    });
-    record!("gsadf_bubble", gsadf_sig, vec![
-        ("GSADF statistic".into(), gsadf_stat),
-        ("95% critical value".into(), gsadf_cv),
-        ("Excess over CV".into(), gsadf_stat - gsadf_cv),
-    ]);
+    // Compute log prices for GSADF (returned for deferred computation when run_gsadf=false)
+    let log_p: Vec<f64> = pre_prices.iter().filter_map(|p| if *p > 0.0 { Some(p.ln()) } else { None }).collect();
+    if run_gsadf {
+        let (gsadf_sig, gsadf_raw) = compute_gsadf(&log_p);
+        record!("gsadf_bubble", gsadf_sig, gsadf_raw);
+    }
 
     // Jump risk signal — BNS z-test (Barndorff-Nielsen & Shephard)
     let mut jump_z = f64::NAN;
@@ -469,7 +496,7 @@ pub fn scan_asset(
     // Aggregate all signals
     let signal = signals::aggregate_signals(&comp);
 
-    AssetScan {
+    (AssetScan {
         asset: entry.symbol.clone(),
         signal,
         results: res,
@@ -479,11 +506,12 @@ pub fn scan_asset(
         data_points,
         prices: spark,
         error: None,
-    }
+    }, log_p)
 }
 
 /// Scan all watchlist entries in parallel (max 3 threads for API rate limiting).
-/// Sends `ScanMsg::Progress` after each asset, then `ScanMsg::Done` at the end.
+/// Phase 1: run everything except GSADF, send `PartialResults`.
+/// Phase 2: run GSADF per asset, update components, re-aggregate, send `Done`.
 pub fn scan_watchlist(
     entries: &[WatchlistEntry],
     window: usize,
@@ -492,26 +520,80 @@ pub fn scan_watchlist(
     tx: mpsc::Sender<ScanMsg>,
 ) {
     let total = entries.len();
-    let results = Mutex::new(Vec::with_capacity(total));
-    let counter = AtomicUsize::new(0);
 
     let pool = rayon::ThreadPoolBuilder::new()
         .num_threads(3)
         .build()
         .unwrap_or_else(|_| rayon::ThreadPoolBuilder::new().build().unwrap());
-    pool.install(|| {
-        entries.par_iter().for_each(|e| {
-            let scan = scan_asset(e, window, days, use_cache);
-            let done = counter.fetch_add(1, Ordering::Relaxed) + 1;
-            let _ = tx.send(ScanMsg::Progress {
-                done,
-                total,
-                asset: e.symbol.clone(),
-            });
-            results.lock().unwrap().push(scan);
-        });
-    });
 
-    let scans = results.into_inner().unwrap();
+    // --- Phase 1: everything except GSADF ---
+    let phase1_results = Mutex::new(Vec::with_capacity(total));
+    let counter = AtomicUsize::new(0);
+
+    let phase1_ok = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        pool.install(|| {
+            entries.par_iter().for_each(|e| {
+                let _ = tx.send(ScanMsg::Progress {
+                    done: counter.load(Ordering::Relaxed),
+                    total,
+                    asset: e.symbol.clone(),
+                });
+                let (scan, log_prices) = scan_asset_inner(e, window, days, use_cache, false);
+                let done = counter.fetch_add(1, Ordering::Relaxed) + 1;
+                let _ = tx.send(ScanMsg::Progress {
+                    done,
+                    total,
+                    asset: e.symbol.clone(),
+                });
+                phase1_results.lock().unwrap().push((scan, log_prices));
+            });
+        });
+    }));
+
+    let pairs: Vec<(AssetScan, Vec<f64>)> = match phase1_ok {
+        Ok(()) => phase1_results.into_inner().unwrap_or_default(),
+        Err(_) => phase1_results.into_inner().unwrap_or_default(),
+    };
+
+    // Send partial results (no GSADF yet) so the UI can display immediately.
+    let partial_scans: Vec<AssetScan> = pairs.iter().map(|(s, _)| s.clone()).collect();
+    let _ = tx.send(ScanMsg::PartialResults(partial_scans));
+
+    // --- Phase 2: compute GSADF per asset and merge ---
+    let counter2 = AtomicUsize::new(0);
+    let final_results = Mutex::new(Vec::with_capacity(total));
+
+    let phase2_ok = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        pool.install(|| {
+            pairs.into_par_iter().for_each(|(mut scan, log_prices)| {
+                let _ = tx.send(ScanMsg::Progress {
+                    done: counter2.load(Ordering::Relaxed),
+                    total,
+                    asset: scan.asset.clone(),
+                });
+                if !log_prices.is_empty() && scan.error.is_none() {
+                    let (gsadf_sig, gsadf_raw) = compute_gsadf(&log_prices);
+                    let detected = if gsadf_sig.is_nan() { None } else { Some(gsadf_sig > 0.5) };
+                    scan.components.insert("gsadf_bubble".to_string(), gsadf_sig);
+                    scan.results.insert("gsadf_bubble".to_string(), detected);
+                    scan.raw_values.insert("gsadf_bubble".to_string(), gsadf_raw);
+                    // Re-aggregate with GSADF included
+                    scan.signal = signals::aggregate_signals(&scan.components);
+                }
+                let done = counter2.fetch_add(1, Ordering::Relaxed) + 1;
+                let _ = tx.send(ScanMsg::Progress {
+                    done,
+                    total,
+                    asset: scan.asset.clone(),
+                });
+                final_results.lock().unwrap().push(scan);
+            });
+        });
+    }));
+
+    let scans = match phase2_ok {
+        Ok(()) => final_results.into_inner().unwrap_or_default(),
+        Err(_) => final_results.into_inner().unwrap_or_default(),
+    };
     let _ = tx.send(ScanMsg::Done(scans));
 }

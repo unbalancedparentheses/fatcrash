@@ -15,7 +15,13 @@ pub fn render(f: &mut Frame, app: &mut App) {
         .split(f.area());
 
     // Title bar
-    let scanning_indicator = if app.scanning && app.scan_total > 0 {
+    let scanning_indicator = if app.gsadf_pending && app.scanning && app.scan_total > 0 {
+        let eta = format_eta(app);
+        format!(
+            " [GSADF {} {}/{}{}]",
+            app.scan_current_asset, app.scan_done, app.scan_total, eta
+        )
+    } else if app.scanning && app.scan_total > 0 {
         let eta = format_eta(app);
         format!(
             " [scanning {} {}/{}{}]",
@@ -94,7 +100,8 @@ pub fn render(f: &mut Frame, app: &mut App) {
                 let i = offset + vi;
 
                 let lppls = scan.signal.components.get("lppls_confidence").copied().unwrap_or(0.0).max(0.0);
-                let gsadf = scan.signal.components.get("gsadf_bubble").copied().unwrap_or(0.0).max(0.0);
+                let gsadf_opt = scan.components.get("gsadf_bubble").copied();
+                let gsadf = gsadf_opt.unwrap_or(0.0).max(0.0);
                 let tc_days = scan.signal.horizon_days;
 
                 let status = scan.signal.status();
@@ -144,7 +151,11 @@ pub fn render(f: &mut Frame, app: &mut App) {
                         .style(Style::default().fg(spark_color)),
                     Cell::from(format!("{:.0}%", lppls * 100.0))
                         .style(Style::default().fg(lppls_color)),
-                    Cell::from(format!("{:.2}", gsadf))
+                    Cell::from(if app.gsadf_pending && gsadf_opt.is_none() {
+                        "  --".to_string()
+                    } else {
+                        format!("{:.2}", gsadf)
+                    })
                         .style(Style::default().fg(gsadf_color)),
                     Cell::from(tc_str),
                     Cell::from(status).style(Style::default().fg(status_color)),

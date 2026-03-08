@@ -100,6 +100,8 @@ pub struct App {
     pub scan_total: usize,
     pub scan_current_asset: String,
     pub scan_started: Option<Instant>,
+    /// True while Phase 2 (GSADF) is still computing.
+    pub gsadf_pending: bool,
 }
 
 impl App {
@@ -123,6 +125,7 @@ impl App {
             scan_total: 0,
             scan_current_asset: String::new(),
             scan_started: None,
+            gsadf_pending: false,
         }
     }
 
@@ -173,7 +176,7 @@ pub fn run(
     let (tx, rx) = mpsc::channel::<ScanMsg>();
 
     // Kick off initial scan
-    start_scan(&app, tx.clone());
+    start_scan(&mut app, tx.clone());
     app.scanning = true;
     app.scan_started = Some(Instant::now());
 
@@ -200,9 +203,18 @@ pub fn run(
                     app.scan_total = total;
                     app.scan_current_asset = asset;
                 }
+                ScanMsg::PartialResults(scans) => {
+                    app.scans = scans;
+                    app.gsadf_pending = true;
+                    // Reset progress counters for Phase 2
+                    app.scan_done = 0;
+                    app.scan_current_asset.clear();
+                    // scanning stays true — Phase 2 (GSADF) is still running
+                }
                 ScanMsg::Done(scans) => {
                     app.scans = scans;
                     app.scanning = false;
+                    app.gsadf_pending = false;
                     app.last_scan = Some(chrono::Utc::now());
                     app.scan_done = 0;
                     app.scan_total = 0;
@@ -215,14 +227,12 @@ pub fn run(
         // Handle input
         if event::poll(tick_rate)? {
             if let Event::Key(key) = event::read()? {
-                if key.kind != KeyEventKind::Press {
-                    continue;
-                }
+                if key.kind == KeyEventKind::Press {
                 match key.code {
                     KeyCode::Char('q') | KeyCode::Char('Q') => break,
                     KeyCode::Char('r') | KeyCode::Char('R') => {
                         if !app.scanning {
-                            start_scan(&app, tx.clone());
+                            start_scan(&mut app, tx.clone());
                             app.scanning = true;
                             app.scan_started = Some(Instant::now());
                             last_refresh = Instant::now();
@@ -275,7 +285,7 @@ pub fn run(
                             None => WINDOWS[0],
                         };
                         if !app.scanning {
-                            start_scan(&app, tx.clone());
+                            start_scan(&mut app, tx.clone());
                             app.scanning = true;
                             app.scan_started = Some(Instant::now());
                             last_refresh = Instant::now();
@@ -289,7 +299,7 @@ pub fn run(
                             None => DAYS[0],
                         };
                         if !app.scanning {
-                            start_scan(&app, tx.clone());
+                            start_scan(&mut app, tx.clone());
                             app.scanning = true;
                             app.scan_started = Some(Instant::now());
                             last_refresh = Instant::now();
@@ -310,12 +320,13 @@ pub fn run(
                     },
                     _ => {}
                 }
+                } // KeyEventKind::Press
             }
         }
 
         // Auto-refresh
         if !app.scanning && last_refresh.elapsed() >= refresh_interval {
-            start_scan(&app, tx.clone());
+            start_scan(&mut app, tx.clone());
             app.scanning = true;
             app.scan_started = Some(Instant::now());
             last_refresh = Instant::now();
@@ -331,11 +342,16 @@ pub fn run(
 }
 
 /// Kick off a background scan on a separate thread.
-fn start_scan(app: &App, tx: mpsc::Sender<ScanMsg>) {
+fn start_scan(app: &mut App, tx: mpsc::Sender<ScanMsg>) {
     let entries = app.config.watchlist.clone();
     let window = app.window;
     let days = app.days;
     let use_cache = app.use_cache;
+
+    // Set total immediately so the UI can show "0/N" right away.
+    app.scan_total = entries.len();
+    app.scan_done = 0;
+    app.scan_current_asset.clear();
 
     std::thread::spawn(move || {
         scanner::scan_watchlist(&entries, window, days, use_cache, tx);

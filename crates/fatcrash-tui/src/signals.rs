@@ -7,10 +7,27 @@ pub struct CrashSignal {
     pub probability: f64,
     pub horizon_days: f64,
     pub components: HashMap<String, f64>,
-    pub n_agreeing: usize,
+    /// Count of the 5 confirmation categories whose median signal > 0.5.
+    pub n_confirming: usize,
+    /// Names of confirming categories.
+    pub confirming_categories: Vec<String>,
 }
 
 impl CrashSignal {
+    /// Bubble-first status: QUIET / WATCH / ALERT.
+    pub fn status(&self) -> &'static str {
+        let lppls = self.components.get("lppls_confidence").copied().unwrap_or(0.0).max(0.0);
+        let gsadf = self.components.get("gsadf_bubble").copied().unwrap_or(0.0).max(0.0);
+
+        if lppls >= 0.5 && self.n_confirming >= 2 {
+            "ALERT"
+        } else if lppls >= 0.3 || gsadf >= 0.5 {
+            "WATCH"
+        } else {
+            "QUIET"
+        }
+    }
+
     pub fn level(&self) -> &'static str {
         if self.probability > 0.7 {
             "CRITICAL"
@@ -32,7 +49,8 @@ pub fn default_weights() -> HashMap<&'static str, f64> {
     w.insert("lppls_tc_proximity", 0.06);
     w.insert("gsadf_bubble", 0.16);
     // Tail estimators
-    w.insert("gpd_var_exceedance", 0.0);
+    w.insert("realized_skewness", 0.03);
+    w.insert("gpd_var_exceedance", 0.02);
     w.insert("kappa_regime", 0.12);
     w.insert("taleb_kappa", 0.06);
     w.insert("hill_thinning", 0.0);
@@ -79,64 +97,73 @@ pub fn default_weights() -> HashMap<&'static str, f64> {
     w
 }
 
-/// All 11 signal categories for agreement counting.
+/// The 5 confirmation categories (non-bubble signals grouped by what they measure).
+pub fn confirmation_categories() -> Vec<(&'static str, Vec<&'static str>)> {
+    vec![
+        ("Tail risk", vec![
+            "kappa_regime", "taleb_kappa", "hill_thinning", "pickands_thinning",
+            "deh_thinning", "qq_thinning", "maxsum_signal", "gpd_var_exceedance",
+            "realized_skewness",
+        ]),
+        ("Regime shift", vec![
+            "hamilton_stress", "csd_warning", "rv_spike", "dfa_trending",
+            "hurst_trending", "spectral_memory",
+        ]),
+        ("Liquidity", vec!["amihud_spike"]),
+        ("Jump risk", vec!["jump_risk_signal"]),
+        ("Momentum", vec![
+            "momentum_reversal", "velocity_spike", "multiscale",
+        ]),
+    ]
+}
+
+/// Compute the median signal value and top-contributing method for each confirmation category.
+/// Returns: Vec<(category_name, median_value, top_method_name)>.
+pub fn category_details(components: &HashMap<String, f64>) -> Vec<(&'static str, f64, String)> {
+    confirmation_categories()
+        .into_iter()
+        .map(|(cat_name, keys)| {
+            let mut vals: Vec<(f64, &str)> = keys
+                .iter()
+                .filter_map(|key| {
+                    components.get(*key).copied().filter(|v| v.is_finite()).map(|v| (v.max(0.0), *key))
+                })
+                .collect();
+            if vals.is_empty() {
+                return (cat_name, 0.0, String::new());
+            }
+            vals.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
+            let median = if vals.len() % 2 == 1 {
+                vals[vals.len() / 2].0
+            } else {
+                (vals[vals.len() / 2 - 1].0 + vals[vals.len() / 2].0) / 2.0
+            };
+            // Top method = the one with the highest value (for drill-down display)
+            let top_method = vals.last().map(|(_, k)| k.to_string()).unwrap_or_default();
+            (cat_name, median, top_method)
+        })
+        .collect()
+}
+
+/// Legacy 11-category grouping (kept for method drill-down category labels).
 pub fn categories() -> HashMap<&'static str, Vec<&'static str>> {
     let mut cats = HashMap::new();
-    cats.insert(
-        "bubble",
-        vec![
-            "lppls_confidence",
-            "gsadf_bubble",
-        ],
-    );
-    cats.insert(
-        "tail",
-        vec![
-            "kappa_regime",
-            "taleb_kappa",
-            "hill_thinning",
-            "pickands_thinning",
-            "gpd_var_exceedance",
-            "deh_thinning",
-            "qq_thinning",
-            "maxsum_signal",
-        ],
-    );
-    cats.insert(
-        "regime",
-        vec![
-            "hurst_trending",
-            "dfa_trending",
-            "spectral_memory",
-            "momentum_reversal",
-            "csd_warning",
-            "hamilton_stress",
-        ],
-    );
-    cats.insert(
-        "structure",
-        vec!["multiscale", "lppls_tc_proximity", "velocity_spike"],
-    );
-    cats.insert(
-        "risk_premium",
-        vec!["vrp_signal", "rv_spike", "jump_risk_signal"],
-    );
-    cats.insert(
-        "liquidity",
-        vec!["sofr_ois_z", "ted_z", "amihud_pct", "xccy_basis_z"],
-    );
-    cats.insert(
-        "vol_regime",
-        vec!["vix_slope_z", "skew_z", "move_z", "vvix_z"],
-    );
-    cats.insert(
-        "credit_macro",
-        vec!["ofr_fsi_z", "credit_spread_z", "ebp_z", "yield_curve_z"],
-    );
-    cats.insert(
-        "structure_flows",
-        vec!["eigenvalue_z", "cot_z", "etf_flows_z"],
-    );
+    cats.insert("bubble", vec!["lppls_confidence", "gsadf_bubble"]);
+    cats.insert("tail", vec![
+        "kappa_regime", "taleb_kappa", "hill_thinning", "pickands_thinning",
+        "gpd_var_exceedance", "realized_skewness", "deh_thinning", "qq_thinning",
+        "maxsum_signal",
+    ]);
+    cats.insert("regime", vec![
+        "hurst_trending", "dfa_trending", "spectral_memory", "momentum_reversal",
+        "csd_warning", "hamilton_stress",
+    ]);
+    cats.insert("structure", vec!["multiscale", "lppls_tc_proximity", "velocity_spike"]);
+    cats.insert("risk_premium", vec!["vrp_signal", "rv_spike", "jump_risk_signal"]);
+    cats.insert("liquidity", vec!["sofr_ois_z", "ted_z", "amihud_pct", "xccy_basis_z", "amihud_spike"]);
+    cats.insert("vol_regime", vec!["vix_slope_z", "skew_z", "move_z", "vvix_z"]);
+    cats.insert("credit_macro", vec!["ofr_fsi_z", "credit_spread_z", "ebp_z", "yield_curve_z"]);
+    cats.insert("structure_flows", vec!["eigenvalue_z", "cot_z", "etf_flows_z"]);
     cats.insert("contagion", vec!["covar_z", "mes_z", "srisk_z"]);
     cats.insert("sentiment", vec!["fomc_tone_z", "news_uncertainty_z"]);
     cats
@@ -144,14 +171,12 @@ pub fn categories() -> HashMap<&'static str, Vec<&'static str>> {
 
 /// Combine individual indicator signals into a crash probability.
 ///
-/// Architecture: LPPLS-first.
+/// Architecture: LPPLS-first with category-max confirmation.
 ///   1. LPPLS (+ GSADF) is the primary bubble detector.
-///   2. If no bubble detected → LOW, regardless of other signals.
-///   3. If bubble detected → other signals confirm or filter it down.
-///
-/// This focuses on endogenous bubble-driven crashes. Other signals
-/// act as a jury: if they agree, probability stays high; if they
-/// disagree, the bubble signal gets discounted.
+///   2. If no bubble detected (score < 0.1) → probability = 0.
+///   3. If bubble detected → 5 confirmation categories scale the score.
+///      Each category uses the median of its constituent signals.
+///      This is robust to single noisy outliers while not diluting genuine signals.
 pub fn aggregate_signals(components: &HashMap<String, f64>) -> CrashSignal {
     let get = |key: &str| -> f64 {
         components.get(key).copied().unwrap_or(0.0).max(0.0)
@@ -162,72 +187,24 @@ pub fn aggregate_signals(components: &HashMap<String, f64>) -> CrashSignal {
     let gsadf = get("gsadf_bubble");
     let bubble_score = lppls.max(gsadf);
 
-    // Secondary: count other signals that confirm (>0.5) or deny (<0.2)
-    let bubble_keys = ["lppls_confidence", "gsadf_bubble", "lppls_tc_proximity"];
-    let w = default_weights();
-    let mut n_confirm = 0_usize;
-    let mut n_deny = 0_usize;
-    let mut n_active = 0_usize;
-
-    for (name, &weight) in &w {
-        if weight <= 0.0 || bubble_keys.contains(name) {
-            continue;
-        }
-        if let Some(&value) = components.get(*name) {
-            if !value.is_nan() {
-                n_active += 1;
-                if value > 0.5 {
-                    n_confirm += 1;
-                } else if value < 0.2 {
-                    n_deny += 1;
-                }
-            }
+    // Confirmation categories: take max signal per category
+    let details = category_details(components);
+    let mut confirming_categories = Vec::new();
+    for (cat_name, max_val, _) in &details {
+        if *max_val > 0.5 {
+            confirming_categories.push(cat_name.to_string());
         }
     }
+    let n_confirming = confirming_categories.len();
 
-    // Confirmation score: -1.0 (all deny) to +1.0 (all confirm)
-    let confirmation = if n_active > 0 {
-        (n_confirm as f64 - n_deny as f64) / n_active as f64
-    } else {
-        0.0
-    };
-
-    // Count agreeing categories
-    let cats = categories();
-    let mut n_agreeing = 0_usize;
-    for (_cat_name, keys) in &cats {
-        let cat_signals: Vec<f64> = keys
-            .iter()
-            .filter_map(|k| components.get(*k).copied())
-            .filter(|v| !v.is_nan())
-            .collect();
-        if !cat_signals.is_empty() {
-            let max_sig = cat_signals
-                .iter()
-                .copied()
-                .fold(f64::NEG_INFINITY, f64::max);
-            if max_sig > 0.5 {
-                n_agreeing += 1;
-            }
-        }
-    }
-
-    // Probability:
-    // - No bubble (score < 0.1): essentially 0
-    // - Bubble detected: score * filter_multiplier
-    //   filter_multiplier = 0.3 (all deny) to 1.0 (all confirm)
+    // Probability: bubble_score * multiplier based on confirmations
+    // 0/5 → 0.4, 3/5 → 0.76, 5/5 → 1.0
     let probability = if bubble_score < 0.1 {
         0.0
     } else {
-        // Map confirmation from [-1, +1] to multiplier [0.3, 1.0]
-        // -1 → 0.3 (most signals disagree, heavily discount bubble)
-        //  0 → 0.65 (neutral)
-        // +1 → 1.0 (all confirm)
-        let multiplier = 0.65 + 0.35 * confirmation;
-        bubble_score * multiplier
+        let multiplier = 0.4 + 0.12 * n_confirming as f64;
+        (bubble_score * multiplier).clamp(0.0, 1.0)
     };
-
-    let probability = probability.clamp(0.0, 1.0);
 
     let horizon = components
         .get("lppls_tc_days")
@@ -238,7 +215,8 @@ pub fn aggregate_signals(components: &HashMap<String, f64>) -> CrashSignal {
         probability,
         horizon_days: horizon,
         components: components.clone(),
-        n_agreeing,
+        n_confirming,
+        confirming_categories,
     }
 }
 
@@ -604,26 +582,14 @@ pub fn eigenvalue_signal(lambda_frac: f64) -> f64 {
     ((lambda_frac - 0.3) / 0.5).clamp(0.0, 1.0)
 }
 
-/// Return the list of categories that have signals > 0.6 in the given components.
+/// Return the list of confirmation categories that have max signal > 0.5.
 pub fn agreeing_categories(components: &HashMap<String, f64>) -> Vec<String> {
-    let cats = categories();
-    let mut result = Vec::new();
-    for (cat_name, keys) in &cats {
-        let cat_signals: Vec<f64> = keys
-            .iter()
-            .filter_map(|k| components.get(*k).copied())
-            .filter(|v| !v.is_nan())
-            .collect();
-        if !cat_signals.is_empty() {
-            let max_sig = cat_signals
-                .iter()
-                .copied()
-                .fold(f64::NEG_INFINITY, f64::max);
-            if max_sig > 0.6 {
-                result.push(cat_name.to_string());
-            }
-        }
-    }
+    let details = category_details(components);
+    let mut result: Vec<String> = details
+        .into_iter()
+        .filter(|(_, max_val, _)| *max_val > 0.5)
+        .map(|(name, _, _)| name.to_string())
+        .collect();
     result.sort();
     result
 }

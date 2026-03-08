@@ -55,6 +55,9 @@ fn main() {
                         scanner::ScanMsg::Progress { done, total, asset } => {
                             eprint!("\rScanning {}... ({}/{})", asset, done, total);
                         }
+                        scanner::ScanMsg::PartialResults(_) => {
+                            // JSON mode waits for full results including GSADF
+                        }
                         scanner::ScanMsg::Done(s) => {
                             eprintln!();
                             break s;

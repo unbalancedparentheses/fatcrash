@@ -633,9 +633,9 @@ cargo run -p fatcrash-tui -- monitor --json --no-cache  # one-shot JSON output
 cargo run -p fatcrash-tui -- cache-clear                # clear cached data
 ```
 
-**Bubble-first dashboard.** LPPLS and GSADF are the only real crash screeners — everything else confirms or denies their signal.
+**Bubble-first dashboard.** LPPLS and GSADF are the only real crash screeners — everything else confirms or denies their signal. GSADF is on-demand (press `g`) because it takes ~90s per asset with 2000 Monte Carlo sims.
 
-**Watchlist view** — per asset: sparkline, LPPLS confidence (0-100%), GSADF stat/CV ratio, days to critical time, status (QUIET/WATCH/ALERT), and confirmation count (N/5). Sorted by status tier (ALERT > WATCH > QUIET), then LPPLS confidence descending.
+**Watchlist view** — per asset: sparkline, LPPLS confidence (0-100%), GSADF stat/CV ratio, days to critical time, status (QUIET/WATCH/ALERT), and confirmation count (N/5). Sorted by status tier (ALERT > WATCH > QUIET), then LPPLS confidence descending. Right panel shows top firing signals (>30%) for the selected asset with signal bars.
 
 | Status | Condition |
 |--------|-----------|
@@ -643,7 +643,7 @@ cargo run -p fatcrash-tui -- cache-clear                # clear cached data
 | WATCH | LPPLS >= 0.3 or GSADF stat >= CV |
 | ALERT | LPPLS >= 0.5 and >= 2 confirmation categories agree |
 
-**Detail view** — bubble panel (LPPLS confidence, tc estimate, tc std dev, GSADF statistic, 95% CV, excess) + 5 confirmation categories:
+**Detail view** — side-by-side sparkline + bubble panel (LPPLS confidence, tc, GSADF statistic, CV, excess). Scrollable confirmations table with signal bars, categories sorted by max signal (hottest first), methods sorted by value within each category. Zero-signal methods are dimmed.
 
 | Category | Signals | What it confirms |
 |----------|---------|-----------------|
@@ -657,7 +657,7 @@ Each category takes the max of its constituent signals. Color: red > 0.7, yellow
 
 **Method drill-down** — description + raw intermediate values (unchanged).
 
-**Keyboard:** `j/k` or arrows to navigate, `Enter/l` to drill down, `Esc/h` to go back, `r` to refresh, `w` to cycle window (60/90/120/180/252), `d` to cycle history days (180/365/730/1095), `q` to quit.
+**Keyboard:** `j/k` or arrows to navigate, `Enter/l` to drill down, `Esc/h` to go back, `g` to compute GSADF for selected asset, `r` to refresh, `w` to cycle window (60/90/120/180/252), `d` to cycle history days (180/365/730/1095), `q` to quit.
 
 **Data:** Yahoo Finance (equities, futures, forex) and CoinGecko (crypto). CSV cache in `~/.cache/fatcrash/` with 24h expiry. Auto-refresh every 5 minutes. Background scanning (never blocks UI).
 

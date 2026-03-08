@@ -1,7 +1,6 @@
 use ratatui::prelude::*;
 use ratatui::widgets::{Block, Borders, Cell, Paragraph, Row, Sparkline, Table, Wrap};
 
-use crate::scanner::AssetScan;
 use crate::signals;
 
 use super::App;
@@ -24,63 +23,35 @@ fn pretty_name(key: &str) -> String {
         .join(" ")
 }
 
-/// Build sorted display rows for a scan: (key, signal_value, detected, weight).
-/// Only includes methods with weight > 0 (or all if <= 30 total).
-fn sorted_methods(scan: &AssetScan) -> Vec<(String, f64, Option<bool>, f64)> {
-    let weights = signals::default_weights();
-    let mut rows: Vec<(String, f64, Option<bool>, f64)> = Vec::new();
-
-    for (name, &weight) in &weights {
-        let signal_val = scan.components.get(*name).copied().unwrap_or(f64::NAN);
-        let detected = scan.results.get(*name).and_then(|v| *v);
-        rows.push((name.to_string(), signal_val, detected, weight));
-    }
-
-    for (name, detected) in &scan.results {
-        if !weights.contains_key(name.as_str()) {
-            let signal_val = scan.components.get(name).copied().unwrap_or(f64::NAN);
-            rows.push((name.clone(), signal_val, *detected, 0.0));
+/// Build the flat list of (category_name, method_key, signal_value) for display.
+fn method_rows(app: &App, scan_idx: usize) -> Vec<(&'static str, &'static str, f64)> {
+    let scan = match app.scans.get(scan_idx) {
+        Some(s) => s,
+        None => return vec![],
+    };
+    let cats = signals::confirmation_categories();
+    let mut rows = Vec::new();
+    for (cat_name, keys) in &cats {
+        for key in keys {
+            let val = scan.components.get(*key).copied().unwrap_or(0.0).max(0.0);
+            rows.push((*cat_name, *key, val));
         }
     }
-
-    rows.sort_by(|a, b| {
-        b.3.partial_cmp(&a.3)
-            .unwrap_or(std::cmp::Ordering::Equal)
-            .then_with(|| {
-                let av = if a.1.is_nan() { -1.0 } else { a.1 };
-                let bv = if b.1.is_nan() { -1.0 } else { b.1 };
-                bv.partial_cmp(&av).unwrap_or(std::cmp::Ordering::Equal)
-            })
-            .then_with(|| a.0.cmp(&b.0))
-    });
-
-    // Always hide NN-based signals (not available in TUI mode)
-    rows.retain(|(name, _, _, _)| name != "mlnn_signal" && name != "plnn_signal");
-
-    // Filter zero-weight if there are many
-    if rows.len() > 30 {
-        rows.retain(|(_, _, _, w)| *w > 0.0);
-    }
-
     rows
 }
 
-/// How many method rows are displayed for a given scan.
+/// How many selectable rows in the detail view: all individual methods.
 pub fn method_count(app: &App, scan_idx: usize) -> usize {
-    app.scans
-        .get(scan_idx)
-        .map(|s| sorted_methods(s).len())
-        .unwrap_or(0)
+    method_rows(app, scan_idx).len()
 }
 
 /// Get the key of the currently selected method in the detail view.
 pub fn selected_method_key(app: &App, scan_idx: usize) -> Option<String> {
-    let scan = app.scans.get(scan_idx)?;
-    let methods = sorted_methods(scan);
-    methods.get(app.method_selected).map(|(k, _, _, _)| k.clone())
+    let rows = method_rows(app, scan_idx);
+    rows.get(app.method_selected).map(|(_, key, _)| key.to_string())
 }
 
-/// Render the per-asset detail view.
+/// Render the per-asset detail view with bubble panel + confirmation categories.
 pub fn render(f: &mut Frame, app: &mut App, scan_idx: usize) {
     let scan = match app.scans.get(scan_idx) {
         Some(s) => s,
@@ -97,35 +68,34 @@ pub fn render(f: &mut Frame, app: &mut App, scan_idx: usize) {
         .constraints([
             Constraint::Length(3),  // header
             Constraint::Length(6),  // sparkline
-            Constraint::Min(10),   // methods table
-            Constraint::Length(4),  // footer
+            Constraint::Length(7),  // bubble panel
+            Constraint::Min(10),   // confirmation categories
+            Constraint::Length(3),  // footer
         ])
         .split(f.area());
 
     // Header
-    let prob = scan.signal.probability;
-    let level = scan.signal.level();
-    let level_color = match level {
-        "CRITICAL" | "HIGH" => Color::Red,
-        "ELEVATED" => Color::Yellow,
-        _ => Color::Green,
+    let status = scan.signal.status();
+    let status_color = match status {
+        "ALERT" => app.theme.signal_high,
+        "WATCH" => app.theme.signal_mid,
+        _ => app.theme.signal_low,
     };
 
     let header_text = format!(
-        " {}  |  Prob: {:.1}%  |  Level: {}  |  Agreeing: {}  |  Data points: {}",
+        " {}  |  Status: {}  |  Confirms: {}/5  |  Data points: {}",
         scan.asset,
-        prob * 100.0,
-        level,
-        scan.signal.n_agreeing,
+        status,
+        scan.signal.n_confirming,
         scan.data_points,
     );
     let header = Paragraph::new(header_text)
         .style(
             Style::default()
-                .fg(level_color)
+                .fg(status_color)
                 .add_modifier(Modifier::BOLD),
         )
-        .block(Block::default().borders(Borders::BOTTOM));
+        .block(Block::default().borders(Borders::BOTTOM).border_style(Style::default().fg(app.theme.border)));
     f.render_widget(header, chunks[0]);
 
     // Sparkline
@@ -151,140 +121,187 @@ pub fn render(f: &mut Frame, app: &mut App, scan_idx: usize) {
         } else {
             0.0
         };
-        let price_color = if change_pct >= 0.0 { Color::Green } else { Color::Red };
+        let price_color = if change_pct >= 0.0 { app.theme.spark_up } else { app.theme.spark_down };
 
         let spark = Sparkline::default()
             .block(
                 Block::default()
                     .title(format!(" Price: {:.2} ({:+.1}%) ", last_price, change_pct))
-                    .borders(Borders::ALL),
+                    .borders(Borders::ALL)
+                    .border_style(Style::default().fg(app.theme.border)),
             )
             .data(&data)
             .style(Style::default().fg(price_color));
         f.render_widget(spark, sparkline_area);
     } else {
         let no_data = Paragraph::new(" No price data available")
-            .block(Block::default().title(" Price ").borders(Borders::ALL));
+            .block(Block::default().title(" Price ").borders(Borders::ALL).border_style(Style::default().fg(app.theme.border)));
         f.render_widget(no_data, sparkline_area);
     }
 
-    // Methods table with scroll
-    let display_rows = sorted_methods(scan);
-    let total_rows = display_rows.len();
+    // Bubble panel
+    let lppls = scan.signal.components.get("lppls_confidence").copied().unwrap_or(0.0).max(0.0);
+    let tc_days = scan.signal.horizon_days;
+    let tc_std = scan.raw_values.get("lppls_confidence")
+        .and_then(|vals| vals.iter().find(|(k, _)| k == "tc std dev (days)").map(|(_, v)| *v))
+        .unwrap_or(f64::NAN);
+    let gsadf_stat = scan.raw_values.get("gsadf_bubble")
+        .and_then(|vals| vals.iter().find(|(k, _)| k == "GSADF statistic").map(|(_, v)| *v))
+        .unwrap_or(f64::NAN);
+    let gsadf_cv = scan.raw_values.get("gsadf_bubble")
+        .and_then(|vals| vals.iter().find(|(k, _)| k == "95% critical value").map(|(_, v)| *v))
+        .unwrap_or(f64::NAN);
+    let gsadf_excess = if gsadf_stat.is_finite() && gsadf_cv.is_finite() {
+        gsadf_stat - gsadf_cv
+    } else {
+        f64::NAN
+    };
 
-    // Visible rows: table area height - borders(2) - header(1) - header margin(1)
-    let visible = (chunks[2].height as usize).saturating_sub(4);
+    let lppls_color = if lppls > 0.7 { app.theme.signal_high } else if lppls > 0.3 { app.theme.signal_mid } else { app.theme.signal_low };
+    let gsadf_color = if gsadf_excess.is_finite() && gsadf_excess > 0.0 { app.theme.signal_high } else { app.theme.signal_low };
 
-    // Adjust scroll offset to keep selection visible
+    let fmt_f = |v: f64| -> String {
+        if v.is_nan() || v.is_infinite() { "-".to_string() } else { format!("{:.2}", v) }
+    };
+
+    let bubble_text = vec![
+        Line::from(vec![
+            Span::raw("  LPPLS confidence: "),
+            Span::styled(format!("{:.0}%", lppls * 100.0), Style::default().fg(lppls_color).add_modifier(Modifier::BOLD)),
+            Span::raw(format!("    tc: {} days    tc std: {}", fmt_f(tc_days), fmt_f(tc_std))),
+        ]),
+        Line::from(vec![
+            Span::raw("  GSADF statistic:  "),
+            Span::styled(fmt_f(gsadf_stat), Style::default().fg(gsadf_color).add_modifier(Modifier::BOLD)),
+            Span::raw(format!("        95% CV: {}    excess: {}", fmt_f(gsadf_cv), fmt_f(gsadf_excess))),
+        ]),
+    ];
+
+    let bubble_panel = Paragraph::new(bubble_text)
+        .block(
+            Block::default()
+                .title(" Bubble Detectors ")
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(app.theme.title)),
+        );
+    f.render_widget(bubble_panel, chunks[2]);
+
+    // Expanded method table: every method grouped by category
+    let rows_data = method_rows(app, scan_idx);
+    let total_rows = rows_data.len();
+
+    // Adjust scroll offset for method selection
+    let visible = (chunks[3].height as usize).saturating_sub(4);
     if app.method_selected < app.detail_offset {
         app.detail_offset = app.method_selected;
     } else if app.method_selected >= app.detail_offset + visible && visible > 0 {
         app.detail_offset = app.method_selected - visible + 1;
     }
 
-    let offset = app.detail_offset;
-    let end = (offset + visible).min(total_rows);
-
-    let header_cells = ["Method", "Signal", "Detected", "Weight"]
+    let cat_header_cells = ["Category", "Method", "Signal"]
         .iter()
         .map(|h| {
             Cell::from(*h).style(
                 Style::default()
-                    .fg(Color::Yellow)
+                    .fg(app.theme.header)
                     .add_modifier(Modifier::BOLD),
             )
         });
-    let table_header = Row::new(header_cells).height(1).bottom_margin(1);
+    let cat_header = Row::new(cat_header_cells).height(1).bottom_margin(1);
 
-    let rows: Vec<Row> = display_rows[offset..end]
+    let offset = app.detail_offset;
+    let end = (offset + visible).min(total_rows);
+
+    // Track which category was last shown to only display it on first row of group
+    let mut last_cat = "";
+    // Need to scan from start to know which categories appeared before offset
+    for (cat, _, _) in &rows_data[..offset] {
+        last_cat = cat;
+    }
+
+    let cat_rows: Vec<Row> = rows_data[offset..end]
         .iter()
         .enumerate()
-        .map(|(vi, (name, sig, det, weight))| {
+        .map(|(vi, (cat_name, method_key, signal))| {
             let i = offset + vi;
-            let sig_str = if sig.is_nan() {
-                "-".to_string()
+
+            let cat_display = if *cat_name != last_cat {
+                last_cat = cat_name;
+                *cat_name
             } else {
-                format!("{:.3}", sig)
+                ""
             };
 
-            let det_str = match det {
-                Some(true) => "\u{2713}",
-                Some(false) => "\u{2717}",
-                None => "-",
-            };
-
-            let sig_color = if sig.is_nan() {
-                Color::DarkGray
-            } else if *sig > 0.7 {
-                Color::Red
-            } else if *sig > 0.5 {
-                Color::Yellow
+            let sig_color = if *signal > 0.7 {
+                app.theme.signal_high
+            } else if *signal > 0.5 {
+                app.theme.signal_mid
+            } else if *signal > 0.01 {
+                app.theme.text
             } else {
-                Color::Green
-            };
-
-            let det_color = match det {
-                Some(true) => Color::Red,
-                Some(false) => Color::Green,
-                None => Color::DarkGray,
+                app.theme.text_dim
             };
 
             let is_selected = i == app.method_selected;
             let row_style = if is_selected {
-                Style::default().bg(Color::Rgb(40, 40, 60)).add_modifier(Modifier::BOLD)
+                Style::default().bg(app.theme.selected_bg).add_modifier(Modifier::BOLD)
             } else {
                 Style::default()
             };
 
             Row::new(vec![
-                Cell::from(pretty_name(name)),
-                Cell::from(sig_str).style(Style::default().fg(sig_color)),
-                Cell::from(det_str).style(Style::default().fg(det_color)),
-                Cell::from(format!("{:.2}", weight)),
+                Cell::from(cat_display).style(Style::default().fg(app.theme.title)),
+                Cell::from(pretty_name(method_key)),
+                Cell::from(format!("{:.2}", signal)).style(Style::default().fg(sig_color)),
             ])
             .style(row_style)
         })
         .collect();
 
-    let table = Table::new(
-        rows,
-        [
-            Constraint::Length(22),
-            Constraint::Length(10),
-            Constraint::Length(10),
-            Constraint::Length(8),
-        ],
-    )
-    .header(table_header)
-    .block(
-        Block::default()
-            .title(" Methods (sorted by weight) ")
-            .borders(Borders::ALL),
-    );
-    f.render_widget(table, chunks[2]);
+    let details = signals::category_details(&scan.components);
+    let n_confirming = details.iter().filter(|(_, v, _)| *v > 0.5).count();
+    let confirming_names: Vec<&str> = details.iter()
+        .filter(|(_, v, _)| *v > 0.5)
+        .map(|(name, _, _)| *name)
+        .collect();
 
-    // Footer
-    let agreeing = signals::agreeing_categories(&scan.components);
-    let cats_str = if agreeing.is_empty() {
-        "none".to_string()
+    let confirm_summary = if n_confirming > 0 {
+        format!(" Confirmations: {}/5 ({}) ", n_confirming, confirming_names.join(", "))
     } else {
-        agreeing.join(", ")
+        " Confirmations: 0/5 ".to_string()
     };
 
+    let cat_table = Table::new(
+        cat_rows,
+        [
+            Constraint::Length(15), // Category
+            Constraint::Length(24), // Method
+            Constraint::Length(8),  // Signal
+        ],
+    )
+    .header(cat_header)
+    .block(
+        Block::default()
+            .title(confirm_summary)
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(app.theme.border)),
+    );
+    f.render_widget(cat_table, chunks[3]);
+
+    // Footer
     let error_str = match &scan.error {
         Some(e) => format!("  |  Error: {}", e),
         None => String::new(),
     };
 
     let footer_text = format!(
-        " Agreeing: {}{}  |  {}  |  \u{2190}=back  \u{2192}=inspect  \u{2191}\u{2193}=select  r=refresh  q=quit",
-        cats_str,
-        error_str,
+        " {}{}  |  \u{2190}=back  \u{2192}=inspect method  \u{2191}\u{2193}=select  r=refresh  q=quit",
         scan.timestamp.format("%H:%M:%S UTC"),
+        error_str,
     );
     let footer = Paragraph::new(footer_text)
-        .style(Style::default().fg(Color::DarkGray))
+        .style(Style::default().fg(app.theme.text_dim))
         .wrap(Wrap { trim: true })
-        .block(Block::default().borders(Borders::TOP));
-    f.render_widget(footer, chunks[3]);
+        .block(Block::default().borders(Borders::TOP).border_style(Style::default().fg(app.theme.border)));
+    f.render_widget(footer, chunks[4]);
 }

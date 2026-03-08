@@ -87,7 +87,7 @@ pub fn render(f: &mut Frame, app: &mut App) {
         let offset = app.watchlist_offset;
         let end = (offset + visible).min(total_rows);
 
-        let header_cells = ["Asset", "Sparkline", "LPPLS", "GSADF", "tc", "Status", "Confirms"]
+        let header_cells = ["Asset", "Sparkline", "LPPLS", "S/CV", "tc", "Status", "Confirms"]
             .iter()
             .map(|h| Cell::from(*h).style(Style::default().fg(app.theme.header).add_modifier(Modifier::BOLD)));
         let header = Row::new(header_cells).height(1).bottom_margin(1);
@@ -100,8 +100,13 @@ pub fn render(f: &mut Frame, app: &mut App) {
                 let i = offset + vi;
 
                 let lppls = scan.signal.components.get("lppls_confidence").copied().unwrap_or(0.0).max(0.0);
-                let gsadf_opt = scan.components.get("gsadf_bubble").copied();
-                let gsadf = gsadf_opt.unwrap_or(0.0).max(0.0);
+                let gsadf_has_data = scan.components.contains_key("gsadf_bubble");
+                // Show raw stat/CV ratio instead of 0-1 signal
+                let gsadf_ratio = scan.raw_values.get("gsadf_bubble").map(|rv| {
+                    let stat = rv.iter().find(|(k, _)| k == "GSADF statistic").map(|(_, v)| *v).unwrap_or(f64::NAN);
+                    let cv = rv.iter().find(|(k, _)| k == "95% critical value").map(|(_, v)| *v).unwrap_or(f64::NAN);
+                    if cv.is_finite() && cv != 0.0 { stat / cv } else { 0.0 }
+                });
                 let tc_days = scan.signal.horizon_days;
 
                 let status = scan.signal.status();
@@ -112,7 +117,8 @@ pub fn render(f: &mut Frame, app: &mut App) {
                 };
 
                 let lppls_color = if lppls > 0.7 { app.theme.signal_high } else if lppls > 0.5 { app.theme.signal_mid } else { app.theme.signal_low };
-                let gsadf_color = if gsadf > 0.7 { app.theme.signal_high } else if gsadf > 0.5 { app.theme.signal_mid } else { app.theme.signal_low };
+                let ratio_val = gsadf_ratio.unwrap_or(0.0);
+                let gsadf_color = if ratio_val >= 1.5 { app.theme.signal_high } else if ratio_val >= 1.0 { app.theme.signal_mid } else { app.theme.signal_low };
 
                 let tc_str = if tc_days.is_finite() && tc_days > 0.0 && lppls >= 0.3 {
                     format!("{:.0}d", tc_days)
@@ -151,12 +157,12 @@ pub fn render(f: &mut Frame, app: &mut App) {
                         .style(Style::default().fg(spark_color)),
                     Cell::from(format!("{:.0}%", lppls * 100.0))
                         .style(Style::default().fg(lppls_color)),
-                    Cell::from(if app.gsadf_pending && gsadf_opt.is_none() {
+                    Cell::from(if app.gsadf_pending && !gsadf_has_data {
                         "\u{00b7}\u{00b7}\u{00b7}".to_string()
                     } else {
-                        format!("{:.2}", gsadf)
+                        format!("{:.2}", ratio_val)
                     })
-                        .style(Style::default().fg(if app.gsadf_pending && gsadf_opt.is_none() {
+                        .style(Style::default().fg(if app.gsadf_pending && !gsadf_has_data {
                             app.theme.text_dim
                         } else {
                             gsadf_color

@@ -307,13 +307,15 @@ fn scan_asset_inner(
     let gpd_sig = safe_call(|| {
         match fatcrash_core::evt::gpd::gpd_var_es_slice(pre, 0.99, 0.95) {
             Ok((var, es)) => {
-                let current_loss = -pre.last().unwrap_or(&0.0);
+                let current_return = *pre.last().unwrap_or(&0.0);
+                let current_loss = -current_return;
                 raw.insert("gpd_var_exceedance".into(), vec![
                     ("VaR 99%".into(), var),
                     ("ES 99%".into(), es),
                     ("Current loss".into(), current_loss),
                 ]);
-                signals::var_exceedance_signal(current_loss, var)
+                // Pass raw return (negative = loss); signal function negates internally
+                signals::var_exceedance_signal(current_return, var)
             }
             Err(_) => f64::NAN,
         }

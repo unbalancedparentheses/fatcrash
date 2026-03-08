@@ -224,13 +224,20 @@ pub fn aggregate_signals(components: &HashMap<String, f64>) -> CrashSignal {
 
 /// Convert LPPLS confidence [0,1] to signal [0,1].
 pub fn lppls_confidence_signal(confidence: f64) -> f64 {
+    if confidence.is_nan() {
+        return 0.0;
+    }
     confidence.clamp(0.0, 1.0)
 }
 
 /// Convert days-to-tc to urgency signal. Closer = higher.
+/// days_to_tc <= 0 means critical point reached/passed → max urgency.
 pub fn tc_proximity_signal(days_to_tc: f64, max_days: f64) -> f64 {
-    if days_to_tc <= 0.0 || days_to_tc.is_nan() {
+    if days_to_tc.is_nan() {
         return 0.0;
+    }
+    if days_to_tc <= 0.0 {
+        return 1.0;
     }
     (1.0 - days_to_tc / max_days).clamp(0.0, 1.0)
 }
@@ -297,15 +304,16 @@ pub fn pickands_signal(gamma: f64, gamma_prev: f64) -> f64 {
 }
 
 /// Signal from GSADF test. Above critical value = explosive bubble.
+/// Ramps from ratio=0.8 (approaching significance) to ratio=2.0 (strongly explosive).
 pub fn gsadf_signal(gsadf_stat: f64, cv95: f64) -> f64 {
     if gsadf_stat.is_nan() || cv95.is_nan() || cv95 == 0.0 {
         return 0.0;
     }
     let ratio = gsadf_stat / cv95;
-    if ratio < 0.5 {
+    if ratio < 0.8 {
         return 0.0;
     }
-    ((ratio - 0.5) / 1.5).clamp(0.0, 1.0)
+    ((ratio - 0.8) / 1.2).clamp(0.0, 1.0)
 }
 
 /// Signal from Hurst exponent. H > 0.5 = trending = potential bubble buildup.
@@ -451,8 +459,8 @@ pub fn realized_skewness_signal(skew: f64) -> f64 {
     if skew >= 0.0 {
         return 0.0;
     }
-    // Scale: -0.5 = moderate (0.5), -1.0+ = full signal (1.0)
-    (-skew).clamp(0.0, 1.0)
+    // Scale: -1.0 = moderate (0.5), -2.0+ = full signal (1.0)
+    (-skew / 2.0).clamp(0.0, 1.0)
 }
 
 /// Signal from Amihud illiquidity spike: current vs baseline.

@@ -62,8 +62,7 @@ pub fn compute_taleb_kappa(data: &[f64], n0: usize, n: usize) -> f64 {
         return f64::NAN;
     }
 
-    let kappa = 2.0 - log_ratio_n / log_ratio_m;
-    if kappa < 0.0 { 0.0 } else { kappa }
+    2.0 - log_ratio_n / log_ratio_m
 }
 
 /// Gaussian benchmark for Taleb kappa via Monte Carlo.

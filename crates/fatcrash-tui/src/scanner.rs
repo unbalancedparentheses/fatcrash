@@ -21,8 +21,10 @@ pub enum ScanMsg {
     },
     /// Phase 1 done: all methods except GSADF computed.
     PartialResults(Vec<AssetScan>),
+    /// One asset's GSADF completed during Phase 2.
+    GsadfUpdate(Box<AssetScan>),
     /// Phase 2 done: everything including GSADF.
-    Done(Vec<AssetScan>),
+    Done,
 }
 
 #[derive(Debug, Clone)]
@@ -559,11 +561,10 @@ pub fn scan_watchlist(
     let partial_scans: Vec<AssetScan> = pairs.iter().map(|(s, _)| s.clone()).collect();
     let _ = tx.send(ScanMsg::PartialResults(partial_scans));
 
-    // --- Phase 2: compute GSADF per asset and merge ---
+    // --- Phase 2: compute GSADF per asset, send each as it completes ---
     let counter2 = AtomicUsize::new(0);
-    let final_results = Mutex::new(Vec::with_capacity(total));
 
-    let phase2_ok = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+    let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         pool.install(|| {
             pairs.into_par_iter().for_each(|(mut scan, log_prices)| {
                 let _ = tx.send(ScanMsg::Progress {
@@ -577,7 +578,6 @@ pub fn scan_watchlist(
                     scan.components.insert("gsadf_bubble".to_string(), gsadf_sig);
                     scan.results.insert("gsadf_bubble".to_string(), detected);
                     scan.raw_values.insert("gsadf_bubble".to_string(), gsadf_raw);
-                    // Re-aggregate with GSADF included
                     scan.signal = signals::aggregate_signals(&scan.components);
                 }
                 let done = counter2.fetch_add(1, Ordering::Relaxed) + 1;
@@ -586,14 +586,10 @@ pub fn scan_watchlist(
                     total,
                     asset: scan.asset.clone(),
                 });
-                final_results.lock().unwrap().push(scan);
+                let _ = tx.send(ScanMsg::GsadfUpdate(Box::new(scan)));
             });
         });
     }));
 
-    let scans = match phase2_ok {
-        Ok(()) => final_results.into_inner().unwrap_or_default(),
-        Err(_) => final_results.into_inner().unwrap_or_default(),
-    };
-    let _ = tx.send(ScanMsg::Done(scans));
+    let _ = tx.send(ScanMsg::Done);
 }

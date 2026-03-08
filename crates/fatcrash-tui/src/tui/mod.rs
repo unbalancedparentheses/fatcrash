@@ -49,23 +49,6 @@ impl Default for Theme {
     }
 }
 
-impl Theme {
-    pub fn hacker() -> Self {
-        Self {
-            title: Color::Magenta,
-            header: Color::LightMagenta,
-            text: Color::Magenta,
-            text_dim: Color::Rgb(100, 50, 120),
-            selected_bg: Color::Rgb(50, 20, 60),
-            border: Color::Rgb(80, 40, 100),
-            signal_high: Color::LightRed,
-            signal_mid: Color::LightMagenta,
-            signal_low: Color::Rgb(100, 200, 100),
-            spark_up: Color::LightMagenta,
-            spark_down: Color::Rgb(180, 60, 180),
-        }
-    }
-}
 
 /// Current view in the TUI.
 #[derive(Debug, Clone)]
@@ -94,7 +77,6 @@ pub struct App {
     /// Scroll offset for the detail methods table.
     pub detail_offset: usize,
     pub theme: Theme,
-    pub hacker_mode: bool,
     /// Scan progress tracking.
     pub scan_done: usize,
     pub scan_total: usize,
@@ -120,18 +102,12 @@ impl App {
             watchlist_offset: 0,
             detail_offset: 0,
             theme: Theme::default(),
-            hacker_mode: false,
             scan_done: 0,
             scan_total: 0,
             scan_current_asset: String::new(),
             scan_started: None,
             gsadf_pending: false,
         }
-    }
-
-    pub fn toggle_theme(&mut self) {
-        self.hacker_mode = !self.hacker_mode;
-        self.theme = if self.hacker_mode { Theme::hacker() } else { Theme::default() };
     }
 
     /// Get scans sorted by status tier (ALERT > WATCH > QUIET), then LPPLS confidence desc.
@@ -206,16 +182,22 @@ pub fn run(
                 ScanMsg::PartialResults(scans) => {
                     app.scans = scans;
                     app.gsadf_pending = true;
+                    app.last_scan = Some(chrono::Utc::now());
                     // Reset progress counters for Phase 2
                     app.scan_done = 0;
                     app.scan_current_asset.clear();
+                    app.scan_started = Some(Instant::now());
                     // scanning stays true — Phase 2 (GSADF) is still running
                 }
-                ScanMsg::Done(scans) => {
-                    app.scans = scans;
+                ScanMsg::GsadfUpdate(updated) => {
+                    // Replace the matching asset in-place
+                    if let Some(scan) = app.scans.iter_mut().find(|s| s.asset == updated.asset) {
+                        *scan = *updated;
+                    }
+                }
+                ScanMsg::Done => {
                     app.scanning = false;
                     app.gsadf_pending = false;
-                    app.last_scan = Some(chrono::Utc::now());
                     app.scan_done = 0;
                     app.scan_total = 0;
                     app.scan_current_asset.clear();
@@ -304,9 +286,6 @@ pub fn run(
                             app.scan_started = Some(Instant::now());
                             last_refresh = Instant::now();
                         }
-                    }
-                    KeyCode::Char('t') | KeyCode::Char('T') => {
-                        app.toggle_theme();
                     }
                     KeyCode::Esc | KeyCode::Backspace | KeyCode::Left | KeyCode::Char('h') => match &app.view {
                         View::Detail(_) => {

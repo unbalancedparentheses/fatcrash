@@ -50,20 +50,26 @@ fn main() {
                 // One-shot scan, print JSON, exit
                 let (tx, rx) = std::sync::mpsc::channel();
                 scanner::scan_watchlist(&cfg.watchlist, window, days, use_cache, tx);
-                let scans = loop {
+                let mut scans = Vec::new();
+                loop {
                     match rx.recv().unwrap() {
                         scanner::ScanMsg::Progress { done, total, asset } => {
                             eprint!("\rScanning {}... ({}/{})", asset, done, total);
                         }
-                        scanner::ScanMsg::PartialResults(_) => {
-                            // JSON mode waits for full results including GSADF
+                        scanner::ScanMsg::PartialResults(s) => {
+                            scans = s;
                         }
-                        scanner::ScanMsg::Done(s) => {
+                        scanner::ScanMsg::GsadfUpdate(updated) => {
+                            if let Some(scan) = scans.iter_mut().find(|s| s.asset == updated.asset) {
+                                *scan = *updated;
+                            }
+                        }
+                        scanner::ScanMsg::Done => {
                             eprintln!();
-                            break s;
+                            break;
                         }
                     }
-                };
+                }
                 let output: Vec<serde_json::Value> = scans
                     .iter()
                     .map(|s| {

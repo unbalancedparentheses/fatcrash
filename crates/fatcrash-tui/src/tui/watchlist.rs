@@ -152,11 +152,15 @@ pub fn render(f: &mut Frame, app: &mut App) {
                     Cell::from(format!("{:.0}%", lppls * 100.0))
                         .style(Style::default().fg(lppls_color)),
                     Cell::from(if app.gsadf_pending && gsadf_opt.is_none() {
-                        "  --".to_string()
+                        "\u{00b7}\u{00b7}\u{00b7}".to_string()
                     } else {
                         format!("{:.2}", gsadf)
                     })
-                        .style(Style::default().fg(gsadf_color)),
+                        .style(Style::default().fg(if app.gsadf_pending && gsadf_opt.is_none() {
+                            app.theme.text_dim
+                        } else {
+                            gsadf_color
+                        })),
                     Cell::from(tc_str),
                     Cell::from(status).style(Style::default().fg(status_color)),
                     Cell::from(confirms_str),
@@ -201,9 +205,15 @@ pub fn render(f: &mut Frame, app: &mut App) {
     let asset_count = app.scans.len();
     let n_alerts = app.scans.iter().filter(|s| s.signal.status() == "ALERT").count();
     let n_watches = app.scans.iter().filter(|s| s.signal.status() == "WATCH").count();
+    let gsadf_status = if app.gsadf_pending {
+        let done = app.scans.iter().filter(|s| s.components.contains_key("gsadf_bubble")).count();
+        format!("  |  GSADF {}/{}", done, asset_count)
+    } else {
+        String::new()
+    };
     let status = Paragraph::new(format!(
-        " Last scan: {}  |  {} assets  |  {} alerts {} watches  |  q r w d t \u{2190}\u{2192} \u{2191}\u{2193}",
-        last_scan_str, asset_count, n_alerts, n_watches
+        " Last scan: {}  |  {} assets  |  {} alerts {} watches{}  |  q r w d \u{2190}\u{2192} \u{2191}\u{2193}",
+        last_scan_str, asset_count, n_alerts, n_watches, gsadf_status
     ))
     .style(Style::default().fg(app.theme.text_dim))
     .block(Block::default().borders(Borders::TOP).border_style(Style::default().fg(app.theme.border)));

@@ -39,6 +39,8 @@ pub struct AssetScan {
     pub timestamp: chrono::DateTime<Utc>,
     pub data_points: usize,
     pub prices: Vec<f64>,
+    /// Log prices for deferred GSADF computation.
+    pub log_prices: Vec<f64>,
     pub error: Option<String>,
 }
 
@@ -66,6 +68,7 @@ fn error_scan(asset: &str, now: chrono::DateTime<Utc>, err: &str) -> AssetScan {
         timestamp: now,
         data_points: 0,
         prices: vec![],
+        log_prices: vec![],
         error: Some(err.to_string()),
     }
 }
@@ -77,7 +80,7 @@ pub fn compute_gsadf(log_prices: &[f64]) -> (f64, Vec<(String, f64)>) {
     let mut gsadf_cv = f64::NAN;
     let sig = safe_call(|| {
         let (stat, _, (_, cv95, _)) =
-            fatcrash_core::bubble::gsadf::gsadf_test_slice(log_prices, None, Some(100), Some(42));
+            fatcrash_core::bubble::gsadf::gsadf_test_slice(log_prices, None, Some(2000), Some(42));
         gsadf_stat = stat;
         gsadf_cv = cv95;
         signals::gsadf_signal(stat, cv95)
@@ -509,6 +512,7 @@ fn scan_asset_inner(
         timestamp: now,
         data_points,
         prices: spark,
+        log_prices: log_p.clone(),
         error: None,
     }, log_p)
 }
@@ -581,36 +585,28 @@ pub fn scan_watchlist(
     let partial_scans: Vec<AssetScan> = pairs.iter().map(|(s, _)| s.clone()).collect();
     let _ = tx.send(ScanMsg::PartialResults(partial_scans));
 
-    // --- Phase 2: compute GSADF per asset, send each as it completes ---
-    // Process sequentially to match display order (top assets first).
-    let counter2 = AtomicUsize::new(0);
-
-    let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        pool.install(|| {
-            pairs.into_par_iter().for_each(|(mut scan, log_prices)| {
-                let _ = tx.send(ScanMsg::Progress {
-                    done: counter2.load(Ordering::Relaxed),
-                    total,
-                    asset: scan.asset.clone(),
-                });
-                if !log_prices.is_empty() && scan.error.is_none() {
-                    let (gsadf_sig, gsadf_raw) = compute_gsadf(&log_prices);
-                    let detected = if gsadf_sig.is_nan() { None } else { Some(gsadf_sig > 0.5) };
-                    scan.components.insert("gsadf_bubble".to_string(), gsadf_sig);
-                    scan.results.insert("gsadf_bubble".to_string(), detected);
-                    scan.raw_values.insert("gsadf_bubble".to_string(), gsadf_raw);
-                    scan.signal = signals::aggregate_signals(&scan.components);
-                }
-                let done = counter2.fetch_add(1, Ordering::Relaxed) + 1;
-                let _ = tx.send(ScanMsg::Progress {
-                    done,
-                    total,
-                    asset: scan.asset.clone(),
-                });
-                let _ = tx.send(ScanMsg::GsadfUpdate(Box::new(scan)));
-            });
-        });
-    }));
-
     let _ = tx.send(ScanMsg::Done);
+}
+
+/// Compute GSADF for a single asset on a background thread.
+/// Sends `GsadfUpdate` when done.
+pub fn scan_gsadf_single(
+    scan: &AssetScan,
+    log_prices: Vec<f64>,
+    tx: mpsc::Sender<ScanMsg>,
+) {
+    let mut scan = scan.clone();
+    std::thread::spawn(move || {
+        if log_prices.is_empty() || scan.error.is_some() {
+            let _ = tx.send(ScanMsg::GsadfUpdate(Box::new(scan)));
+            return;
+        }
+        let (gsadf_sig, gsadf_raw) = compute_gsadf(&log_prices);
+        let detected = if gsadf_sig.is_nan() { None } else { Some(gsadf_sig > 0.5) };
+        scan.components.insert("gsadf_bubble".to_string(), gsadf_sig);
+        scan.results.insert("gsadf_bubble".to_string(), detected);
+        scan.raw_values.insert("gsadf_bubble".to_string(), gsadf_raw);
+        scan.signal = signals::aggregate_signals(&scan.components);
+        let _ = tx.send(ScanMsg::GsadfUpdate(Box::new(scan)));
+    });
 }

@@ -24,20 +24,35 @@ fn pretty_name(key: &str) -> String {
 }
 
 /// Build the flat list of (category_name, method_key, signal_value) for display.
+/// Categories are sorted by their max signal value (hottest first).
+/// Methods within each category are sorted by signal value descending.
 fn method_rows(app: &App, scan_idx: usize) -> Vec<(&'static str, &'static str, f64)> {
     let scan = match app.scans.get(scan_idx) {
         Some(s) => s,
         None => return vec![],
     };
     let cats = signals::confirmation_categories();
-    let mut rows = Vec::new();
-    for (cat_name, keys) in &cats {
-        for key in keys {
-            let val = scan.components.get(*key).copied().unwrap_or(0.0).max(0.0);
-            rows.push((*cat_name, *key, val));
-        }
-    }
-    rows
+
+    // Build per-category groups with their max signal for sorting.
+    let mut groups: Vec<(f64, Vec<(&'static str, &'static str, f64)>)> = cats
+        .iter()
+        .map(|(cat_name, keys)| {
+            let mut methods: Vec<(&'static str, &'static str, f64)> = keys
+                .iter()
+                .map(|key| {
+                    let val = scan.components.get(*key).copied().unwrap_or(0.0).max(0.0);
+                    (*cat_name, *key, val)
+                })
+                .collect();
+            methods.sort_by(|a, b| b.2.partial_cmp(&a.2).unwrap_or(std::cmp::Ordering::Equal));
+            let max_sig = methods.iter().map(|m| m.2).fold(0.0_f64, f64::max);
+            (max_sig, methods)
+        })
+        .collect();
+
+    groups.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
+
+    groups.into_iter().flat_map(|(_, methods)| methods).collect()
 }
 
 /// How many selectable rows in the detail view: all individual methods.
@@ -67,8 +82,7 @@ pub fn render(f: &mut Frame, app: &mut App, scan_idx: usize) {
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Length(3),  // header
-            Constraint::Length(6),  // sparkline
-            Constraint::Length(7),  // bubble panel
+            Constraint::Length(8),  // sparkline + bubble (side by side)
             Constraint::Min(10),   // confirmation categories
             Constraint::Length(3),  // footer
         ])
@@ -98,10 +112,19 @@ pub fn render(f: &mut Frame, app: &mut App, scan_idx: usize) {
         .block(Block::default().borders(Borders::BOTTOM).border_style(Style::default().fg(app.theme.border)));
     f.render_widget(header, chunks[0]);
 
-    // Sparkline
-    let sparkline_area = chunks[1];
+    // Side-by-side: sparkline (left) + bubble panel (right)
+    let top_cols = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([
+            Constraint::Percentage(55),
+            Constraint::Percentage(45),
+        ])
+        .split(chunks[1]);
+
+    // Sparkline (left)
+    let sparkline_area = top_cols[0];
     if !scan.prices.is_empty() {
-        let n = scan.prices.len().min(sparkline_area.width as usize);
+        let n = scan.prices.len().min(sparkline_area.width.saturating_sub(2) as usize);
         let tail = &scan.prices[scan.prices.len() - n..];
         let min = tail.iter().cloned().fold(f64::INFINITY, f64::min);
         let max = tail.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
@@ -139,7 +162,7 @@ pub fn render(f: &mut Frame, app: &mut App, scan_idx: usize) {
         f.render_widget(no_data, sparkline_area);
     }
 
-    // Bubble panel
+    // Bubble panel (right)
     let lppls = scan.signal.components.get("lppls_confidence").copied().unwrap_or(0.0).max(0.0);
     let tc_days = scan.signal.horizon_days;
     let tc_std = scan.raw_values.get("lppls_confidence")
@@ -166,14 +189,20 @@ pub fn render(f: &mut Frame, app: &mut App, scan_idx: usize) {
 
     let bubble_text = vec![
         Line::from(vec![
-            Span::raw("  LPPLS confidence: "),
+            Span::raw(" LPPLS: "),
             Span::styled(format!("{:.0}%", lppls * 100.0), Style::default().fg(lppls_color).add_modifier(Modifier::BOLD)),
-            Span::raw(format!("    tc: {} days    tc std: {}", fmt_f(tc_days), fmt_f(tc_std))),
+            Span::raw(format!("  tc: {}d", fmt_f(tc_days))),
         ]),
         Line::from(vec![
-            Span::raw("  GSADF statistic:  "),
+            Span::raw(format!(" tc std: {}", fmt_f(tc_std))),
+        ]),
+        Line::from(vec![
+            Span::raw(" GSADF: "),
             Span::styled(fmt_f(gsadf_stat), Style::default().fg(gsadf_color).add_modifier(Modifier::BOLD)),
-            Span::raw(format!("        95% CV: {}    excess: {}", fmt_f(gsadf_cv), fmt_f(gsadf_excess))),
+            Span::raw(format!("  CV: {}", fmt_f(gsadf_cv))),
+        ]),
+        Line::from(vec![
+            Span::raw(format!(" excess: {}", fmt_f(gsadf_excess))),
         ]),
     ];
 
@@ -184,9 +213,9 @@ pub fn render(f: &mut Frame, app: &mut App, scan_idx: usize) {
                 .borders(Borders::ALL)
                 .border_style(Style::default().fg(app.theme.title)),
         );
-    f.render_widget(bubble_panel, chunks[2]);
+    f.render_widget(bubble_panel, top_cols[1]);
 
-    // -- Confirmations: two-column layout --
+    // -- Confirmations: single-column with scrolling --
     let rows_data = method_rows(app, scan_idx);
 
     let details = signals::category_details(&scan.components);
@@ -207,52 +236,15 @@ pub fn render(f: &mut Frame, app: &mut App, scan_idx: usize) {
         " Confirmations: 0/5 ".to_string()
     };
 
-    // Outer block with summary title
-    let outer_block = Block::default()
-        .title(confirm_summary)
-        .borders(Borders::ALL)
-        .border_style(Style::default().fg(app.theme.border));
-    let inner = outer_block.inner(chunks[3]);
-    f.render_widget(outer_block, chunks[3]);
-
-    // Split into left column | 1-char separator | right column
-    let cols = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([
-            Constraint::Percentage(50),
-            Constraint::Length(1),
-            Constraint::Percentage(50),
-        ])
-        .split(inner);
-
-    // Render vertical separator
-    let sep_lines: String = (0..cols[1].height)
-        .map(|_| "\u{2502}")
-        .collect::<Vec<_>>()
-        .join("\n");
-    let sep = Paragraph::new(sep_lines).style(Style::default().fg(app.theme.border));
-    f.render_widget(sep, cols[1]);
-
-    // Assign categories to columns: left = Tail risk + Momentum, right = rest
-    let left_cats = ["Tail risk", "Momentum"];
-
-    let mut left_rows: Vec<Row> = Vec::new();
-    let mut right_rows: Vec<Row> = Vec::new();
-    let mut last_left_cat = "";
-    let mut last_right_cat = "";
+    // Build all display rows, tracking which display-row index corresponds to each method.
+    // (display_row_index, is_method, flat_method_index)
+    let mut all_rows: Vec<(Row, Option<usize>)> = Vec::new();
+    let mut last_cat = "";
 
     for (flat_idx, (cat_name, method_key, signal)) in rows_data.iter().enumerate() {
-        let is_left = left_cats.contains(cat_name);
-        let (rows, last_cat) = if is_left {
-            (&mut left_rows, &mut last_left_cat)
-        } else {
-            (&mut right_rows, &mut last_right_cat)
-        };
-
-        // Category header row when category changes
-        if *cat_name != *last_cat {
-            *last_cat = cat_name;
-            rows.push(
+        if *cat_name != last_cat {
+            last_cat = cat_name;
+            all_rows.push((
                 Row::new(vec![
                     Cell::from(format!(" {}", cat_name)).style(
                         Style::default()
@@ -261,10 +253,10 @@ pub fn render(f: &mut Frame, app: &mut App, scan_idx: usize) {
                     ),
                     Cell::from(""),
                 ]),
-            );
+                None,
+            ));
         }
 
-        // Method row
         let sig_color = if *signal > 0.7 {
             app.theme.signal_high
         } else if *signal > 0.5 {
@@ -284,21 +276,52 @@ pub fn render(f: &mut Frame, app: &mut App, scan_idx: usize) {
             Style::default()
         };
 
-        rows.push(
+        all_rows.push((
             Row::new(vec![
                 Cell::from(format!("  {}", pretty_name(method_key))),
                 Cell::from(format!("{:.2}", signal))
                     .style(Style::default().fg(sig_color)),
             ])
             .style(row_style),
-        );
+            Some(flat_idx),
+        ));
     }
 
-    let col_widths = [Constraint::Fill(1), Constraint::Length(6)];
-    let left_table = Table::new(left_rows, col_widths);
-    f.render_widget(left_table, cols[0]);
-    let right_table = Table::new(right_rows, col_widths);
-    f.render_widget(right_table, cols[2]);
+    // Find the display-row index of the selected method for scrolling.
+    let selected_display_row = all_rows
+        .iter()
+        .position(|(_, m)| *m == Some(app.method_selected))
+        .unwrap_or(0);
+
+    // Visible rows: table area height - borders(2) - no header
+    let visible = (chunks[2].height as usize).saturating_sub(2);
+
+    if selected_display_row < app.detail_offset {
+        app.detail_offset = selected_display_row;
+    } else if visible > 0 && selected_display_row >= app.detail_offset + visible {
+        app.detail_offset = selected_display_row - visible + 1;
+    }
+
+    let offset = app.detail_offset;
+    let end = (offset + visible).min(all_rows.len());
+    let visible_rows: Vec<Row> = all_rows
+        .into_iter()
+        .skip(offset)
+        .take(end - offset)
+        .map(|(row, _)| row)
+        .collect();
+
+    let table = Table::new(
+        visible_rows,
+        [Constraint::Fill(1), Constraint::Length(6)],
+    )
+    .block(
+        Block::default()
+            .title(confirm_summary)
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(app.theme.border)),
+    );
+    f.render_widget(table, chunks[2]);
 
     // Footer
     let error_str = match &scan.error {
@@ -307,7 +330,7 @@ pub fn render(f: &mut Frame, app: &mut App, scan_idx: usize) {
     };
 
     let footer_text = format!(
-        " {}{}  |  \u{2190}=back  \u{2192}=inspect method  \u{2191}\u{2193}=select  r=refresh  q=quit",
+        " {}{}  |  \u{2190}=back  \u{2192}=inspect method  \u{2191}\u{2193}=select  g=GSADF  r=refresh  q=quit",
         scan.timestamp.format("%H:%M:%S UTC"),
         error_str,
     );
@@ -315,5 +338,5 @@ pub fn render(f: &mut Frame, app: &mut App, scan_idx: usize) {
         .style(Style::default().fg(app.theme.text_dim))
         .wrap(Wrap { trim: true })
         .block(Block::default().borders(Borders::TOP).border_style(Style::default().fg(app.theme.border)));
-    f.render_widget(footer, chunks[4]);
+    f.render_widget(footer, chunks[3]);
 }

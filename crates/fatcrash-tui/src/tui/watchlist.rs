@@ -15,13 +15,8 @@ pub fn render(f: &mut Frame, app: &mut App) {
         .split(f.area());
 
     // Title bar
-    let scanning_indicator = if app.gsadf_pending && app.scanning && app.scan_total > 0 {
-        let eta = format_eta(app);
-        format!(
-            " [GSADF {} {}/{}{}]",
-            app.scan_current_asset, app.scan_done, app.scan_total, eta
-        )
-    } else if app.scanning && app.scan_total > 0 {
+    let gsadf_count = app.gsadf_computing.len();
+    let scanning_indicator = if app.scanning && app.scan_total > 0 {
         let eta = format_eta(app);
         format!(
             " [scanning {} {}/{}{}]",
@@ -87,7 +82,7 @@ pub fn render(f: &mut Frame, app: &mut App) {
         let offset = app.watchlist_offset;
         let end = (offset + visible).min(total_rows);
 
-        let header_cells = ["Asset", "Sparkline", "LPPLS", "S/CV", "tc", "Status", "Confirms"]
+        let header_cells = ["Asset", "Sparkline", "LPPLS", "GSADF", "tc", "Status", "Confirms"]
             .iter()
             .map(|h| Cell::from(*h).style(Style::default().fg(app.theme.header).add_modifier(Modifier::BOLD)));
         let header = Row::new(header_cells).height(1).bottom_margin(1);
@@ -149,6 +144,7 @@ pub fn render(f: &mut Frame, app: &mut App) {
                     app.theme.text_dim
                 };
 
+                let is_computing_gsadf = app.gsadf_computing.contains(&scan.asset);
                 let error_suffix = if scan.error.is_some() { " !" } else { "" };
 
                 Row::new(vec![
@@ -157,18 +153,28 @@ pub fn render(f: &mut Frame, app: &mut App) {
                         .style(Style::default().fg(spark_color)),
                     Cell::from(format!("{:.0}%", lppls * 100.0))
                         .style(Style::default().fg(lppls_color)),
-                    Cell::from(if app.gsadf_pending && !gsadf_has_data {
+                    Cell::from(if is_computing_gsadf {
                         "\u{00b7}\u{00b7}\u{00b7}".to_string()
+                    } else if !gsadf_has_data {
+                        "-".to_string()
                     } else {
                         format!("{:.2}", ratio_val)
                     })
-                        .style(Style::default().fg(if app.gsadf_pending && !gsadf_has_data {
+                        .style(Style::default().fg(if !gsadf_has_data {
                             app.theme.text_dim
                         } else {
                             gsadf_color
                         })),
                     Cell::from(tc_str),
-                    Cell::from(status).style(Style::default().fg(status_color)),
+                    Cell::from(if is_computing_gsadf {
+                        "GSADF..".to_string()
+                    } else {
+                        status.to_string()
+                    }).style(Style::default().fg(if is_computing_gsadf {
+                        app.theme.signal_mid
+                    } else {
+                        status_color
+                    })),
                     Cell::from(confirms_str),
                 ])
                 .style(row_style)
@@ -211,14 +217,13 @@ pub fn render(f: &mut Frame, app: &mut App) {
     let asset_count = app.scans.len();
     let n_alerts = app.scans.iter().filter(|s| s.signal.status() == "ALERT").count();
     let n_watches = app.scans.iter().filter(|s| s.signal.status() == "WATCH").count();
-    let gsadf_status = if app.gsadf_pending {
-        let done = app.scans.iter().filter(|s| s.components.contains_key("gsadf_bubble")).count();
-        format!("  |  GSADF {}/{}", done, asset_count)
+    let gsadf_status = if gsadf_count > 0 {
+        format!("  |  GSADF computing: {}", gsadf_count)
     } else {
         String::new()
     };
     let status = Paragraph::new(format!(
-        " Last scan: {}  |  {} assets  |  {} alerts {} watches{}  |  q r w d \u{2190}\u{2192} \u{2191}\u{2193}",
+        " Last scan: {}  |  {} assets  |  {} alerts {} watches{}  |  g=GSADF q r w d \u{2190}\u{2192} \u{2191}\u{2193}",
         last_scan_str, asset_count, n_alerts, n_watches, gsadf_status
     ))
     .style(Style::default().fg(app.theme.text_dim))

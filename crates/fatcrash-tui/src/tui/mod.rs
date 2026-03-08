@@ -2,6 +2,7 @@ pub mod detail;
 pub mod method;
 pub mod watchlist;
 
+use std::collections::HashSet;
 use std::io;
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
@@ -74,14 +75,16 @@ pub struct App {
     pub use_cache: bool,
     /// Scroll offset for the watchlist table.
     pub watchlist_offset: usize,
+    /// Scroll offset for the detail methods table.
+    pub detail_offset: usize,
     pub theme: Theme,
     /// Scan progress tracking.
     pub scan_done: usize,
     pub scan_total: usize,
     pub scan_current_asset: String,
     pub scan_started: Option<Instant>,
-    /// True while Phase 2 (GSADF) is still computing.
-    pub gsadf_pending: bool,
+    /// Assets currently computing GSADF on demand.
+    pub gsadf_computing: HashSet<String>,
 }
 
 impl App {
@@ -98,12 +101,13 @@ impl App {
             days,
             use_cache,
             watchlist_offset: 0,
+            detail_offset: 0,
             theme: Theme::default(),
             scan_done: 0,
             scan_total: 0,
             scan_current_asset: String::new(),
             scan_started: None,
-            gsadf_pending: false,
+            gsadf_computing: HashSet::new(),
         }
     }
 
@@ -178,23 +182,16 @@ pub fn run(
                 }
                 ScanMsg::PartialResults(scans) => {
                     app.scans = scans;
-                    app.gsadf_pending = true;
                     app.last_scan = Some(chrono::Utc::now());
-                    // Reset progress counters for Phase 2
-                    app.scan_done = 0;
-                    app.scan_current_asset.clear();
-                    app.scan_started = Some(Instant::now());
-                    // scanning stays true — Phase 2 (GSADF) is still running
                 }
                 ScanMsg::GsadfUpdate(updated) => {
-                    // Replace the matching asset in-place
+                    app.gsadf_computing.remove(&updated.asset);
                     if let Some(scan) = app.scans.iter_mut().find(|s| s.asset == updated.asset) {
                         *scan = *updated;
                     }
                 }
                 ScanMsg::Done => {
                     app.scanning = false;
-                    app.gsadf_pending = false;
                     app.scan_done = 0;
                     app.scan_total = 0;
                     app.scan_current_asset.clear();
@@ -282,6 +279,30 @@ pub fn run(
                             app.scanning = true;
                             app.scan_started = Some(Instant::now());
                             last_refresh = Instant::now();
+                        }
+                    }
+                    KeyCode::Char('g') | KeyCode::Char('G') => {
+                        let asset_idx = match &app.view {
+                            View::Watchlist => {
+                                let sorted = app.sorted_scans();
+                                sorted.get(app.selected).map(|(idx, _)| *idx)
+                            }
+                            View::Detail(idx) => Some(*idx),
+                            _ => None,
+                        };
+                        if let Some(idx) = asset_idx {
+                            if let Some(scan) = app.scans.get(idx) {
+                                let already_has = scan.components.contains_key("gsadf_bubble");
+                                let already_computing = app.gsadf_computing.contains(&scan.asset);
+                                if !already_has && !already_computing && !scan.log_prices.is_empty() {
+                                    app.gsadf_computing.insert(scan.asset.clone());
+                                    scanner::scan_gsadf_single(
+                                        scan,
+                                        scan.log_prices.clone(),
+                                        tx.clone(),
+                                    );
+                                }
+                            }
                         }
                     }
                     KeyCode::Esc | KeyCode::Backspace | KeyCode::Left | KeyCode::Char('h') => match &app.view {

@@ -435,6 +435,10 @@ When comparing tail forecasts, the score difference is known in advance on every
 
 **Limitations:** Assumes iid losses: use standardized residuals, not raw returns.
 
+### Crash-window backtest of the 2026 methods
+
+See the README section "Crash-window results" and `analysis/tail_methods_2026_backtest.py`. In short, the tail-shape estimators (conservative Hill, reduced-bias EVI, tail persistence, mixture ξ, homogeneity gating) have zero or negative lift before crashes. Expectile ES has positive lift (+17% at 120d) and complements GPD VaR.
+
 ## Signal Aggregation
 
 Methods are grouped into independent categories. When 3+ categories have elevated signals (> 0.5), the aggregator applies a +15% bonus to crash probability.

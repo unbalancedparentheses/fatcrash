@@ -222,7 +222,7 @@ The Rust layer also exposes **realized skewness** (rolling third moment / std^3,
 
 ### Tail diagnostics and backtests (2026 papers)
 
-Research primitives in `_core`. They are not in the aggregator and have not been run through the crash-window backtest, so they have no F1 yet. Details and formulas are in [docs/methods.md](docs/methods.md); the PDFs are in `papers/`.
+Research primitives in `_core`, not in the aggregator. Details and formulas are in [docs/methods.md](docs/methods.md); the PDFs are in `papers/`. Crash-window results are below the table.
 
 | Method | Function | What it adds | Paper |
 |--------|----------|--------------|-------|
@@ -236,6 +236,28 @@ Research primitives in `_core`. They are not in the aggregator and have not been
 | ES e-backtest | `es_e_backtest` | Sequential ES monitoring without VaR | Wang & Yu 2026 |
 
 The accuracy report also prints Wilson 95% intervals for recall, because the effective sample size is the number of crashes (Coelho 2026).
+
+#### Crash-window results
+
+`python analysis/tail_methods_2026_backtest.py` scores the new methods on the same crash and non-crash windows as the accuracy report. Each method compares the pre-peak window with an earlier baseline window of the same length. Hill, DEH, QQ, Pickands and GPD VaR are re-scored on the same windows. Data: BTC/SPY/Gold, 23 FRED forex pairs, and LBMA gold/silver (114–119 crash and 650 non-crash windows per window size). The Databento futures and options-backtester series are not public, so these numbers are not comparable to the tables above.
+
+Every method's precision sits near the 15% base rate, so F1 alone hides the question that matters: does the signal fire more often before crashes than at other times? The table shows **lift** = recall − false-positive rate, with a two-proportion test (p-values are optimistic because forex pairs share crises).
+
+| Method | Lift 30d | Lift 60d | Lift 120d | F1 120d |
+|--------|----------|----------|-----------|---------|
+| Hill (existing) | −18% (p<0.001) | −3% | 0% | 23% |
+| Conservative Hill | −16% (p=0.002) | −4% | 0% | 23% |
+| RB Hill / NRB power mean / RB Lehmer | −14% to −18% | −3% to −4% | +1% to +8% (n.s.) | 23–27% |
+| Tail persistence | −8% | −6% | +2% | 24% |
+| Lognormal–GPD mixture ξ | — | — | +6% (n.s.) | 23% |
+| Homogeneity-gated thickening | −2% | +4% (p=0.04) | −1% | 7% |
+| **Expectile ES** | +9% (n.s.) | **+12% (p=0.02)** | **+17% (p=0.001)** | **30%** |
+| GPD VaR (existing) | — | — | +24% (p<0.001) | 25% |
+
+- **Tail-shape estimators do not anticipate crashes, old or new.** At 30d, the Hill family fires *less* often before crashes than at random times. Windows that end at a peak are usually calm run-ups, so tails look thinner just before the drop. Removing Hill's bias does not change this.
+- **Conservative Hill gives the same detections as Hill.** With equal-length windows the rescaling constant is the same in both, so it only matters for absolute claims (e.g. "alpha < 2 at 95% confidence").
+- **The mixture's ξ hits its lower bound in 64% of windows.** With 60–120 days of losses, body and tail cannot be separated, so use it on full histories.
+- **Expectile ES is the one useful new signal.** It measures loss size, not tail shape, so it belongs with GPD VaR in the risk family. It covers more windows: GPD VaR has a result on only 62 of the 114 crash windows at 120d, and none at 60d.
 
 ### Constant volatility strategy
 

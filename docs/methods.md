@@ -174,6 +174,64 @@ $$R_n = \frac{\max_i |X_i|}{\sum_i |X_i|}$$
 
 ---
 
+### Conservative Hill (rescaled)
+
+**What it measures:** A lower-confidence tail index: an $\alpha$ that rarely overestimates the true value. Overestimating $\alpha$ underestimates crash probabilities.
+
+**Formula:** With $H_k$ the Hill log-spacing mean,
+
+$$\hat\alpha^{(\theta)} = \frac{1-\theta}{H_k}, \qquad -\log P(\hat\alpha^{(\theta)} > \alpha) \sim k f(\theta), \quad f(\theta) = -\theta - \log(1-\theta)$$
+
+Given a target overestimation probability $\delta$: $\lambda = \log(1/\delta)/k$ and $\theta = 1 + W_0(-e^{-(1+\lambda)})$.
+
+**Parameters:** `k` (default $\sqrt n$), `delta` (default 0.05). Python: `conservative_hill(data, k, delta)` → `(alpha, theta)`.
+
+**Reference:** Gösgens, M., van Parys, B. & Zwart, B. (2026). "Large and Moderate Deviations for Conservative Tail-Index Estimation." arXiv:2609.31127.
+
+**Limitations:** Large-deviations rate, not an exact finite-sample bound. Assumes iid data; volatility clustering lowers the effective $k$. Among scale-invariant estimators using the same $k$ order statistics, none is less biased at the same decay rate.
+
+### Power-mean, Lehmer-mean, and reduced-bias EVI estimators
+
+**What it measures:** $\xi = 1/\alpha$ with the leading Hill bias removed, so the estimate is much flatter in $k$.
+
+**Formula:** With log-excesses $V_i = \ln X_{(i)} - \ln X_{(k+1)}$ and $M^{(p)} = \frac1k\sum V_i^p$:
+
+$$\hat\xi_{PM}(p) = \left(\frac{M^{(p)}}{\Gamma(p+1)}\right)^{1/p}, \qquad \hat\xi_{L}(p) = \frac{M^{(p)}}{p\,M^{(p-1)}}$$
+
+Both equal Hill at $p=1$. Reduced-bias versions multiply by $1 - c(p,\hat\rho)\,\hat\beta (n/k)^{\hat\rho}$; the nonlinear version uses $2 - \exp\{c\,\hat\beta (n/k)^{\hat\rho}\}$. The second-order parameters $(\hat\rho,\hat\beta)$ are estimated at $k_1 = n^{0.999}$ (Fraga Alves et al. 2003; Gomes & Martins 2002).
+
+**Parameters:** `kind` ∈ {`hill`, `pm`, `nrb_pm`, `lehmer`}, `p`, `tau` (0 for $-1\le\rho<0$). Python: `reduced_bias_evi`, `power_mean_evi`, `lehmer_evi`, `second_order_params`.
+
+**Reference:** Henriques-Rodrigues, L., Caeiro, F. & Gomes, M.I. (2026). "Nonlinear Reduced-Bias Extreme Value Index Estimators: A Comparative Study." arXiv:2610.34308.
+
+**Limitations:** Needs ≥ 20 positive values; the second-order estimates are noisy on short rolling windows. Best on full histories or long windows, where a larger $k$ is usable.
+
+### Tail persistence
+
+**What it measures:** How far observations overshoot an extreme threshold, in units of that threshold. This is the ES/VaR ratio.
+
+**Formula:**
+
+$$P(u) = \frac{E[X \mid X > Q(u)]}{Q(u)}, \qquad \lim_{u\to1} P(u) = \frac{1}{1-\xi} \quad (0<\xi<1)$$
+
+**Interpretation:** $P \approx 1$ for light tails; $P = 1.5$ for $\alpha = 3$; $P \to \infty$ as $\alpha \to 1$.
+
+**Reference:** Rawat, N., Yadav, S.K., Sharma, D. & Yadav, R. (2026). "Tail persistence of extremes at finite and asymptotic levels with Bayesian hierarchical inference." arXiv:2611.03288.
+
+**Limitations:** The asymptotic value $1/(1-\xi)$ is a fixed transform of $\xi$, so it adds no information beyond Hill/DEH and is not in the aggregator. Only the empirical finite-level $P(u)$ (`tail_persistence`, `tail_persistence_rolling`) carries anything new. The paper is written for environmental data; the Bayesian hierarchical model is not implemented.
+
+### Tail-index homogeneity test
+
+**What it measures:** Whether the tail index really differs across groups (countries, regimes, before/after) or along a covariate, without estimating any conditional tail index.
+
+**Method:** Under a common $\alpha$, log exceedances $\ln(Y/w)$ are asymptotically Exp($\alpha$) regardless of the covariate. The test measures dependence between log exceedances and the covariate with squared distance covariance, calibrated by permutation (plus-one p-value). The group version keeps the top `k_per_group` of *each* group with its own threshold. Without this, a single global threshold would select mostly from the fattest-tailed group and the test would lose power.
+
+**Python:** `tail_homogeneity_test(values, groups, k_per_group)` and `tail_homogeneity_covariate_test(values, covariate, k)` → `(statistic, p_value, n_tail)`.
+
+**Reference:** Yang, T.T. (2026). "Testing Tail-Index Homogeneity via Exceedance-Covariate Independence." arXiv:2610.21019.
+
+**Limitations:** The permutation null assumes independent observations. Decluster or subsample daily returns first.
+
 ## Family 3: Extreme Value Theory
 
 ### GPD (Generalized Pareto Distribution)
@@ -213,6 +271,36 @@ $$H(x) = \begin{cases} \exp\left[-\left(1 + \xi\frac{x-\mu}{\sigma}\right)^{-1/\
 - $\xi < 0$: Weibull (bounded support)
 
 **Reference:** Fisher, R.A. & Tippett, L.H.C. (1928).
+
+### Lognormal–GPD mixture (threshold-free)
+
+**What it measures:** The whole loss distribution as a lognormal body plus a zero-location GPD tail. No threshold to tune.
+
+**Formula:**
+
+$$f(x) = p\,\mathrm{LN}(x;\mu,s) + (1-p)\,\mathrm{GPD}(x;\beta,\xi), \qquad \xi > 0$$
+
+The mixture's tail is the GPD's, so $\xi$ is the tail index of the losses. It is fitted by EM: weighted lognormal MLE in closed form plus a weighted GPD MLE. VaR comes from inverting the mixture CDF; ES uses closed-form stop-loss transforms of both components.
+
+**Python:** `lognormal_gpd_mixture(data)` → `(p_body, mu, s, xi, beta, loglik, converged)`; `lognormal_gpd_mixture_var_es(data, p)`.
+
+**Reference:** Bee, M. & Santi, F. (2026). "A multivariate unsupervised lognormal-GPD mixture for dependent losses." arXiv:2611.02148 (univariate model implemented; the paper's multivariate Gumbel-copula extension is not).
+
+**Limitations:** EM finds a local maximum. It is slower than POT GPD, so it suits full-history fits better than every rolling step.
+
+### Extreme expectiles
+
+**What it measures:** The $\tau$-expectile of losses and the expected loss beyond it. Expectiles are the only risk measure that is both coherent and elicitable, and unlike VaR they respond to the size of tail losses.
+
+**Formula:** For $0<\gamma<1$, $e_\tau / q_\tau \to (1/\gamma - 1)^{-\gamma}$, giving
+
+$$\hat e_\tau = (1/\hat\gamma - 1)^{-\hat\gamma}\,\hat q_\tau, \qquad \hat q_\tau = X_{(k+1)}\left(\frac{k}{n(1-\tau)}\right)^{\hat\gamma}, \qquad \mathrm{XES}_\tau \approx \frac{\hat e_\tau}{1-\hat\gamma}$$
+
+with Hill $\hat\gamma$ and the Weissman quantile.
+
+**Python:** `expectile_var_es(data, tau=0.99)` → `(expectile, xes, gamma)`.
+
+**Reference:** Daouia, A., Girard, S. & Stupfler, G. (2018). "Estimation of tail risk based on extreme expectiles." *JRSS B*, 80(2).
 
 ---
 
@@ -326,6 +414,26 @@ Relation to Hurst: $d = H - 0.5$.
 **Reference:** Geweke, J. & Porter-Hudak, S. (1983).
 
 ---
+
+## Evaluation & Backtesting
+
+### Effective sample size is the number of tail events
+
+When comparing tail forecasts, the score difference is known in advance on every day without an exceedance. The information is in the exceedances, so they are the effective sample size, not the number of days (Coelho 2026). The same applies to crash detection: recall is estimated from the crash windows. `analysis/accuracy_report.py` now prints a Wilson 95% interval for recall. For example, 90% recall over 96 crashes is 82–94%, and 82% over 39 crash windows is 67–91%. Crash windows that share a market-wide event are not independent, so even these intervals are optimistic.
+
+### Anytime-valid comparison of quantile forecasts
+
+`compare_quantile_forecasts(y, q_a, q_b, tau)` gives an empirical-Bernstein confidence sequence $(L_t, U_t)$ for the running mean quantile-score difference. It is valid simultaneously over all $t$ with no distributional assumption. $L_t>0$ means forecast B is better; $U_t<0$ means A is. Unlike a Diebold–Mariano test, it does not systematically favour the less conservative forecaster when exceedances are rare.
+
+**Reference:** Coelho, R. (2026). "Comparing tail forecasts: the number of exceedances is the sample size." arXiv:2610.40366.
+
+### ES e-backtest without VaR forecasts
+
+`es_e_backtest(losses, es_forecast, n_cal)` monitors $H_0: \mathrm{ES}_p \le r$ with an e-process: reject the first time it exceeds $1/\alpha$, checked as often as you like. A binomial lower confidence bound for VaR from the calibration window replaces the missing VaR forecast, and the e-process takes the infimum of the ES betting product over all VaR values in $[z_\delta, r]$.
+
+**Reference:** Wang, R. & Yu, J. (2026). "E-Backtesting Expected Shortfall without Value-at-Risk Forecasts under Time-series Models." arXiv:2610.17681 (iid version implemented; the AR-GARCH time-series version is not).
+
+**Limitations:** Assumes iid losses: use standardized residuals, not raw returns.
 
 ## Signal Aggregation
 

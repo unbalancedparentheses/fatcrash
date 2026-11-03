@@ -54,3 +54,15 @@ pub fn log_prices_slice(prices: &[f64]) -> Result<Vec<f64>, String> {
     let log_p: Vec<f64> = prices.iter().map(|p| p.ln()).collect();
     Ok(log_p)
 }
+
+/// Finite, strictly positive values (absolute values if `use_abs`), sorted
+/// in descending order. Shared preprocessing for order-statistic estimators.
+pub fn sorted_desc_positive(data: &[f64], use_abs: bool) -> Vec<f64> {
+    let mut values: Vec<f64> = data
+        .iter()
+        .map(|&x| if use_abs { x.abs() } else { x })
+        .filter(|x| x.is_finite() && *x > 0.0)
+        .collect();
+    values.sort_by(|a, b| b.partial_cmp(a).unwrap_or(std::cmp::Ordering::Equal));
+    values
+}

@@ -229,3 +229,87 @@ def lppls_solve_linear(
     m: float,
     omega: float,
 ) -> tuple[float, float, float, float, float] | None: ...
+
+# 2026 tail methods
+def conservative_hill(
+    data: npt.NDArray[np.float64],
+    k: int | None = None,
+    delta: float = 0.05,
+    use_abs: bool = True,
+) -> tuple[float, float]: ...
+def power_mean_evi(
+    data: npt.NDArray[np.float64], k: int | None = None, p: float = 0.5, use_abs: bool = True
+) -> float: ...
+def lehmer_evi(
+    data: npt.NDArray[np.float64], k: int | None = None, p: float = 2.0, use_abs: bool = True
+) -> float: ...
+def second_order_params(
+    data: npt.NDArray[np.float64], tau: float = 0.0, use_abs: bool = True
+) -> tuple[float, float]: ...
+def reduced_bias_evi(
+    data: npt.NDArray[np.float64],
+    k: int | None = None,
+    kind: str = "nrb_pm",
+    p: float = 0.5,
+    tau: float = 0.0,
+    use_abs: bool = True,
+) -> float: ...
+def tail_persistence(
+    data: npt.NDArray[np.float64], u: float = 0.95, use_abs: bool = True
+) -> float: ...
+def tail_persistence_rolling(
+    data: npt.NDArray[np.float64], window: int, u: float = 0.95, use_abs: bool = True
+) -> npt.NDArray[np.float64]: ...
+def asymptotic_tail_persistence(xi: float) -> float: ...
+def tail_homogeneity_test(
+    values: npt.NDArray[np.float64],
+    groups: npt.NDArray[np.int64],
+    k_per_group: int,
+    n_perm: int = 299,
+    seed: int = 0,
+    use_abs: bool = True,
+) -> tuple[float, float, int]: ...
+def tail_homogeneity_covariate_test(
+    values: npt.NDArray[np.float64],
+    covariate: npt.NDArray[np.float64],
+    k: int,
+    n_perm: int = 299,
+    seed: int = 0,
+    use_abs: bool = True,
+) -> tuple[float, float, int]: ...
+def lognormal_gpd_mixture(
+    data: npt.NDArray[np.float64], max_iter: int = 1000, tol: float = 1e-8
+) -> tuple[float, float, float, float, float, float, bool]: ...
+def lognormal_gpd_mixture_var_es(
+    data: npt.NDArray[np.float64], p: float = 0.99, max_iter: int = 1000, tol: float = 1e-8
+) -> tuple[float, float]: ...
+def expectile_var_es(
+    data: npt.NDArray[np.float64], tau: float = 0.99, k: int | None = None
+) -> tuple[float, float, float]: ...
+
+# Backtesting
+def es_e_backtest(
+    losses: npt.NDArray[np.float64],
+    es_forecast: float,
+    n_cal: int,
+    p: float = 0.975,
+    delta: float = 0.01,
+    gamma: float = 50.0,
+    alpha: float = 0.05,
+    lam: float | None = None,
+) -> tuple[npt.NDArray[np.float64], int | None, float, float]: ...
+def compare_quantile_forecasts(
+    y: npt.NDArray[np.float64],
+    q_a: npt.NDArray[np.float64],
+    q_b: npt.NDArray[np.float64],
+    tau: float = 0.025,
+    delta: float = 0.05,
+    warmup: int = 250,
+    n_lambdas: int = 20,
+) -> tuple[
+    npt.NDArray[np.float64],
+    npt.NDArray[np.float64],
+    npt.NDArray[np.float64],
+    int,
+    tuple[int, int] | None,
+]: ...

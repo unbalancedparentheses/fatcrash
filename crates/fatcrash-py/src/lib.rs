@@ -8,7 +8,10 @@ use numpy::{PyArray1, PyReadonlyArray1};
 use pyo3::prelude::*;
 
 use fatcrash_core::bubble::gsadf as core_gsadf;
-use fatcrash_core::evt::{gev as core_gev, gpd as core_gpd};
+use fatcrash_core::backtest::{e_backtest as core_ebt, forecast_cs as core_fcs};
+use fatcrash_core::evt::{
+    expectile as core_expectile, gev as core_gev, gpd as core_gpd, mixture as core_mixture,
+};
 use fatcrash_core::lppls::{
     confidence as core_confidence, fitter as core_fitter, model as core_model,
 };
@@ -17,7 +20,9 @@ use fatcrash_core::regime::{
     realized_var as core_realized_var,
 };
 use fatcrash_core::tail::{
-    absorption as core_absorption, amihud as core_amihud, deh as core_deh, dfa as core_dfa,
+    absorption as core_absorption, amihud as core_amihud, conservative as core_conservative,
+    deh as core_deh, dfa as core_dfa, homogeneity as core_homogeneity,
+    persistence as core_persistence, reduced_bias as core_rb,
     hill as core_hill, hurst as core_hurst, kappa as core_kappa, maxsum as core_maxsum,
     momentum as core_momentum, pickands as core_pickands, qq as core_qq,
     skewness as core_skewness, spectral as core_spectral, velocity as core_velocity,
@@ -1349,6 +1354,233 @@ fn log_prices<'py>(py: Python<'py>, prices: PyReadonlyArray1<'py, f64>) -> PyRes
     }
 }
 
+// ── 2026 tail methods: conservative / reduced-bias EVI, persistence, homogeneity ──
+
+fn value_err(e: String) -> PyErr {
+    pyo3::exceptions::PyValueError::new_err(e)
+}
+
+/// Conservative (rescaled) Hill estimator (Gösgens, van Parys & Zwart 2026).
+///
+/// alpha = (1 - theta) * Hill, with theta chosen so that
+/// P(alpha_hat > alpha) decays like `delta` (large-deviations rate, iid data).
+///
+/// Args:
+///     data: Array of returns.
+///     k: Number of order statistics (default: sqrt(n)).
+///     delta: Target probability of overestimating alpha (default: 0.05).
+///     use_abs: Whether to use absolute values (default: true).
+///
+/// Returns:
+///     (alpha, theta).
+#[pyfunction]
+#[pyo3(signature = (data, k=None, delta=0.05, use_abs=true))]
+fn conservative_hill(data: PyReadonlyArray1<'_, f64>, k: Option<usize>, delta: f64, use_abs: bool) -> PyResult<(f64, f64)> {
+    Ok(core_conservative::conservative_hill_slice(data.as_slice()?, k, delta, use_abs))
+}
+
+/// Power-mean EVI estimator xi_PM(p) (p > -0.5; p = 1 is Hill).
+///
+/// Returns:
+///     Extreme value index xi (alpha = 1/xi).
+#[pyfunction]
+#[pyo3(signature = (data, k=None, p=0.5, use_abs=true))]
+fn power_mean_evi(data: PyReadonlyArray1<'_, f64>, k: Option<usize>, p: f64, use_abs: bool) -> PyResult<f64> {
+    Ok(core_rb::power_mean_evi_slice(data.as_slice()?, k, p, use_abs))
+}
+
+/// Lehmer-mean EVI estimator xi_L(p) (p > 0; p = 1 is Hill).
+///
+/// Returns:
+///     Extreme value index xi (alpha = 1/xi).
+#[pyfunction]
+#[pyo3(signature = (data, k=None, p=2.0, use_abs=true))]
+fn lehmer_evi(data: PyReadonlyArray1<'_, f64>, k: Option<usize>, p: f64, use_abs: bool) -> PyResult<f64> {
+    Ok(core_rb::lehmer_evi_slice(data.as_slice()?, k, p, use_abs))
+}
+
+/// Second-order tail parameters (rho, beta) at k1 = n^0.999
+/// (Fraga Alves et al. 2003; Gomes & Martins 2002).
+///
+/// Returns:
+///     (rho, beta). NaN with fewer than 20 positive values.
+#[pyfunction]
+#[pyo3(signature = (data, tau=0.0, use_abs=true))]
+fn second_order_params(data: PyReadonlyArray1<'_, f64>, tau: f64, use_abs: bool) -> PyResult<(f64, f64)> {
+    Ok(core_rb::second_order_params_slice(data.as_slice()?, tau, use_abs))
+}
+
+/// Reduced-bias EVI estimator (Henriques-Rodrigues, Caeiro & Gomes 2026).
+///
+/// Args:
+///     data: Array of returns.
+///     k: Number of order statistics (default: sqrt(n)). RB estimators are
+///         flat in k, so larger k (e.g. n/10) is usually fine.
+///     kind: "hill" (RB Hill), "pm" (RB power mean), "nrb_pm" (nonlinear RB
+///         power mean, default), or "lehmer" (RB Lehmer mean).
+///     p: Power/Lehmer parameter (ignored for "hill").
+///     tau: Tuning for the rho estimator (0 for -1 <= rho < 0, 1 for rho < -1).
+///     use_abs: Whether to use absolute values (default: true).
+///
+/// Returns:
+///     Extreme value index xi (alpha = 1/xi).
+#[pyfunction]
+#[pyo3(signature = (data, k=None, kind="nrb_pm", p=0.5, tau=0.0, use_abs=true))]
+fn reduced_bias_evi(data: PyReadonlyArray1<'_, f64>, k: Option<usize>, kind: &str, p: f64, tau: f64, use_abs: bool) -> PyResult<f64> {
+    let kind = match kind {
+        "hill" => core_rb::RbKind::Hill,
+        "pm" => core_rb::RbKind::PowerMean,
+        "nrb_pm" => core_rb::RbKind::NonlinearPowerMean,
+        "lehmer" => core_rb::RbKind::Lehmer,
+        other => return Err(value_err(format!("unknown kind {other:?}; use hill, pm, nrb_pm, lehmer"))),
+    };
+    Ok(core_rb::reduced_bias_evi_slice(data.as_slice()?, k, kind, p, tau, use_abs))
+}
+
+/// Empirical tail persistence P(u) = E[X | X > Q(u)] / Q(u) (the ES/VaR ratio).
+///
+/// Returns:
+///     P(u) >= 1. Tends to 1/(1 - xi) for heavy tails, 1 for light tails.
+#[pyfunction]
+#[pyo3(signature = (data, u=0.95, use_abs=true))]
+fn tail_persistence(data: PyReadonlyArray1<'_, f64>, u: f64, use_abs: bool) -> PyResult<f64> {
+    Ok(core_persistence::tail_persistence_slice(data.as_slice()?, u, use_abs))
+}
+
+/// Rolling empirical tail persistence.
+#[pyfunction]
+#[pyo3(signature = (data, window, u=0.95, use_abs=true))]
+fn tail_persistence_rolling<'py>(py: Python<'py>, data: PyReadonlyArray1<'py, f64>, window: usize, u: f64, use_abs: bool) -> PyResult<Bound<'py, PyArray1<f64>>> {
+    Ok(PyArray1::from_vec(py, core_persistence::tail_persistence_rolling_slice(data.as_slice()?, window, u, use_abs)))
+}
+
+/// Asymptotic tail persistence 1/(1 - xi) (1 for xi <= 0, inf for xi >= 1).
+#[pyfunction]
+fn asymptotic_tail_persistence(xi: f64) -> f64 {
+    core_persistence::asymptotic_persistence(xi)
+}
+
+/// Tail-index homogeneity test across groups (Yang 2026, locally balanced).
+///
+/// Each group keeps its own top `k_per_group` values, normalized by its own
+/// threshold; a distance-covariance permutation test checks whether the log
+/// exceedances depend on the group. Assumes independent observations.
+///
+/// Args:
+///     values: Array of returns (or losses).
+///     groups: Integer group label per value (e.g. country, regime, period).
+///     k_per_group: Tail observations retained per group.
+///     n_perm: Number of permutations (default: 299).
+///     seed: RNG seed.
+///     use_abs: Whether to use absolute values (default: true).
+///
+/// Returns:
+///     (statistic, p_value, n_tail). Small p_value = tail indices differ.
+#[pyfunction]
+#[pyo3(signature = (values, groups, k_per_group, n_perm=299, seed=0, use_abs=true))]
+fn tail_homogeneity_test(values: PyReadonlyArray1<'_, f64>, groups: PyReadonlyArray1<'_, i64>, k_per_group: usize, n_perm: usize, seed: u64, use_abs: bool) -> PyResult<(f64, f64, usize)> {
+    let groups: Vec<usize> = groups
+        .as_slice()?
+        .iter()
+        .map(|&g| usize::try_from(g).map_err(|_| value_err("group labels must be non-negative".into())))
+        .collect::<PyResult<_>>()?;
+    let r = core_homogeneity::tail_homogeneity_groups(values.as_slice()?, &groups, k_per_group, n_perm, seed, use_abs).map_err(value_err)?;
+    Ok((r.statistic, r.p_value, r.n_tail))
+}
+
+/// Tail-index homogeneity test against a continuous covariate (Yang 2026, global top-k).
+///
+/// Returns:
+///     (statistic, p_value, n_tail).
+#[pyfunction]
+#[pyo3(signature = (values, covariate, k, n_perm=299, seed=0, use_abs=true))]
+fn tail_homogeneity_covariate_test(values: PyReadonlyArray1<'_, f64>, covariate: PyReadonlyArray1<'_, f64>, k: usize, n_perm: usize, seed: u64, use_abs: bool) -> PyResult<(f64, f64, usize)> {
+    let r = core_homogeneity::tail_homogeneity_covariate(values.as_slice()?, covariate.as_slice()?, k, n_perm, seed, use_abs).map_err(value_err)?;
+    Ok((r.statistic, r.p_value, r.n_tail))
+}
+
+/// Threshold-free lognormal–GPD mixture fit to losses (Bee & Santi 2026).
+///
+/// Args:
+///     data: Array of returns (losses = negated negative returns).
+///     max_iter: EM iteration cap (default: 1000).
+///     tol: Relative log-likelihood tolerance (default: 1e-8).
+///
+/// Returns:
+///     (p_body, mu, s, xi, beta, loglik, converged). xi is the tail index.
+#[pyfunction]
+#[pyo3(signature = (data, max_iter=1000, tol=1e-8))]
+fn lognormal_gpd_mixture(data: PyReadonlyArray1<'_, f64>, max_iter: usize, tol: f64) -> PyResult<(f64, f64, f64, f64, f64, f64, bool)> {
+    let f = core_mixture::lognormal_gpd_mixture_slice(data.as_slice()?, max_iter, tol).map_err(value_err)?;
+    Ok((f.p, f.mu, f.s, f.xi, f.beta, f.loglik, f.converged))
+}
+
+/// VaR and ES from the lognormal–GPD mixture (no threshold needed).
+///
+/// Returns:
+///     (VaR, ES) at confidence level p.
+#[pyfunction]
+#[pyo3(signature = (data, p=0.99, max_iter=1000, tol=1e-8))]
+fn lognormal_gpd_mixture_var_es(data: PyReadonlyArray1<'_, f64>, p: f64, max_iter: usize, tol: f64) -> PyResult<(f64, f64)> {
+    let f = core_mixture::lognormal_gpd_mixture_slice(data.as_slice()?, max_iter, tol).map_err(value_err)?;
+    Ok((f.var(p), f.es(p)))
+}
+
+/// Extreme expectile and expectile-based ES of losses
+/// (Daouia, Girard & Stupfler 2018). Coherent and elicitable.
+///
+/// Returns:
+///     (expectile, xes, gamma). Infinite when gamma >= 1.
+#[pyfunction]
+#[pyo3(signature = (data, tau=0.99, k=None))]
+fn expectile_var_es(data: PyReadonlyArray1<'_, f64>, tau: f64, k: Option<usize>) -> PyResult<(f64, f64, f64)> {
+    Ok(core_expectile::expectile_var_es_slice(data.as_slice()?, tau, k))
+}
+
+/// Anytime-valid ES backtest without VaR forecasts (Wang & Yu 2026, iid version).
+///
+/// Args:
+///     losses: Loss series (positive = loss); iid assumed (use residuals).
+///     es_forecast: Constant ES forecast at level p.
+///     n_cal: Calibration window length (monitoring starts after it).
+///     p: ES level (default: 0.975).
+///     delta: VaR confidence-bound error (default: 0.01).
+///     gamma: Cap on the e-process infimum (default: 50).
+///     alpha: Test level; reject when the e-process reaches 1/alpha.
+///     lam: Betting fraction in [0, 1-p] (default: chosen on calibration data).
+///
+/// Returns:
+///     (e_process, reject_index or None, var_lower_bound, lambda).
+#[pyfunction]
+#[pyo3(signature = (losses, es_forecast, n_cal, p=0.975, delta=0.01, gamma=50.0, alpha=0.05, lam=None))]
+#[allow(clippy::too_many_arguments)]
+fn es_e_backtest<'py>(py: Python<'py>, losses: PyReadonlyArray1<'py, f64>, es_forecast: f64, n_cal: usize, p: f64, delta: f64, gamma: f64, alpha: f64, lam: Option<f64>) -> PyResult<(Bound<'py, PyArray1<f64>>, Option<usize>, f64, f64)> {
+    let r = core_ebt::es_e_backtest_iid(losses.as_slice()?, es_forecast, p, n_cal, delta, gamma, alpha, lam).map_err(value_err)?;
+    Ok((PyArray1::from_vec(py, r.e_process), r.reject_at, r.var_lower_bound, r.lambda))
+}
+
+/// Anytime-valid comparison of two lower-tail quantile (VaR) forecasts
+/// (Coelho 2026). Effective sample size = number of exceedances.
+///
+/// Args:
+///     y: Realized returns.
+///     q_a, q_b: Quantile forecasts at level tau (e.g. -VaR).
+///     tau: Quantile level (default: 0.025).
+///     delta: Error level of the confidence sequence (default: 0.05).
+///     warmup: Rounds used only to set the bet scale (default: 250).
+///     n_lambdas: Number of mixed bet sizes (default: 20).
+///
+/// Returns:
+///     (lower, upper, mean, n_exceedances, decision) where decision is
+///     (index, +1 if B better / -1 if A better) or None.
+#[pyfunction]
+#[pyo3(signature = (y, q_a, q_b, tau=0.025, delta=0.05, warmup=250, n_lambdas=20))]
+#[allow(clippy::too_many_arguments, clippy::type_complexity)]
+fn compare_quantile_forecasts<'py>(py: Python<'py>, y: PyReadonlyArray1<'py, f64>, q_a: PyReadonlyArray1<'py, f64>, q_b: PyReadonlyArray1<'py, f64>, tau: f64, delta: f64, warmup: usize, n_lambdas: usize) -> PyResult<(Bound<'py, PyArray1<f64>>, Bound<'py, PyArray1<f64>>, Bound<'py, PyArray1<f64>>, usize, Option<(usize, i8)>)> {
+    let r = core_fcs::compare_quantile_forecasts(y.as_slice()?, q_a.as_slice()?, q_b.as_slice()?, tau, delta, warmup, n_lambdas).map_err(value_err)?;
+    Ok((PyArray1::from_vec(py, r.lower), PyArray1::from_vec(py, r.upper), PyArray1::from_vec(py, r.mean), r.n_exceedances, r.decision))
+}
+
 // ── Module registration ──────────────────────────────────
 
 #[pymodule]
@@ -1387,7 +1619,26 @@ fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(absorption_ratio, m)?)?;
     m.add_function(wrap_pyfunction!(absorption_ratio_rolling, m)?)?;
 
+    // 2026 tail methods
+    m.add_function(wrap_pyfunction!(conservative_hill, m)?)?;
+    m.add_function(wrap_pyfunction!(power_mean_evi, m)?)?;
+    m.add_function(wrap_pyfunction!(lehmer_evi, m)?)?;
+    m.add_function(wrap_pyfunction!(second_order_params, m)?)?;
+    m.add_function(wrap_pyfunction!(reduced_bias_evi, m)?)?;
+    m.add_function(wrap_pyfunction!(tail_persistence, m)?)?;
+    m.add_function(wrap_pyfunction!(tail_persistence_rolling, m)?)?;
+    m.add_function(wrap_pyfunction!(asymptotic_tail_persistence, m)?)?;
+    m.add_function(wrap_pyfunction!(tail_homogeneity_test, m)?)?;
+    m.add_function(wrap_pyfunction!(tail_homogeneity_covariate_test, m)?)?;
+
+    // Backtesting
+    m.add_function(wrap_pyfunction!(es_e_backtest, m)?)?;
+    m.add_function(wrap_pyfunction!(compare_quantile_forecasts, m)?)?;
+
     // EVT
+    m.add_function(wrap_pyfunction!(lognormal_gpd_mixture, m)?)?;
+    m.add_function(wrap_pyfunction!(lognormal_gpd_mixture_var_es, m)?)?;
+    m.add_function(wrap_pyfunction!(expectile_var_es, m)?)?;
     m.add_function(wrap_pyfunction!(gpd_fit, m)?)?;
     m.add_function(wrap_pyfunction!(gpd_var_es, m)?)?;
     m.add_function(wrap_pyfunction!(gev_fit, m)?)?;

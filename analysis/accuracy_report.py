@@ -550,6 +550,23 @@ def test_method_on_non_crash(df, center_idx, window=120,
 # ── Metrics ────────────────────────────────────────────────
 
 
+def wilson_interval(successes, n, z=1.96):
+    """Wilson score interval for a binomial proportion (95% by default).
+
+    For recall, n is the number of crash windows, not the number of days:
+    the crashes are the effective sample size (Coelho 2026). Crash windows
+    that share a market-wide event (e.g. 2008 across assets) are not
+    independent, so even this interval is optimistic.
+    """
+    if n == 0:
+        return (0.0, 1.0)
+    phat = successes / n
+    denom = 1 + z * z / n
+    centre = (phat + z * z / (2 * n)) / denom
+    half = z * ((phat * (1 - phat) / n + z * z / (4 * n * n)) ** 0.5) / denom
+    return (max(0.0, centre - half), min(1.0, centre + half))
+
+
 def compute_metrics(tp_results, fp_results, methods):
     """Compute precision, recall, F1 per method.
 
@@ -570,6 +587,8 @@ def compute_metrics(tp_results, fp_results, methods):
         metrics[method] = {
             "tp": tp, "fp": fp, "fn": fn, "tn": tn,
             "precision": precision, "recall": recall, "f1": f1,
+            "recall_ci": wilson_interval(tp, tp + fn),
+            "precision_ci": wilson_interval(tp, tp + fp),
         }
     return metrics
 
@@ -877,23 +896,27 @@ def print_crash_detection_results(results, window, all_methods):
     print(f"  All numbers are in-sample on historical data (BTC, SPY, Gold).")
     print()
     print(f"  {'Method':<20} {'TP':>4} {'FP':>4} {'FN':>4} {'TN':>4}  "
-          f"{'Prec':>6} {'Recall':>6} {'F1':>6}")
-    print("  " + "-" * 64)
+          f"{'Prec':>6} {'Recall':>6} {'F1':>6}  {'Recall 95% CI':>13}")
+    print("  " + "-" * 79)
 
     sorted_methods = sorted(all_methods, key=lambda m: metrics.get(m, {}).get("f1", 0), reverse=True)
     for method in sorted_methods:
         m = metrics.get(method)
         if m is None or (m["tp"] + m["fn"]) == 0:
             continue
+        lo, hi = m["recall_ci"]
         print(
             f"  {method:<20} {m['tp']:>4} {m['fp']:>4} {m['fn']:>4} {m['tn']:>4}  "
-            f"{m['precision']:>5.0%} {m['recall']:>6.0%} {m['f1']:>5.0%}"
+            f"{m['precision']:>5.0%} {m['recall']:>6.0%} {m['f1']:>5.0%}  "
+            f"{lo:>5.0%}–{hi:<5.0%}"
         )
 
     print()
     print("  Precision = TP/(TP+FP) — how often a signal is correct")
     print("  Recall    = TP/(TP+FN) — how many crashes are caught")
     print("  F1        = harmonic mean of precision and recall")
+    print("  Recall CI = Wilson 95% interval; n = crash windows, not days (Coelho 2026).")
+    print("              Crashes shared across assets are not independent, so it is optimistic.")
 
     # ── Aggregator evaluation ──────────────────────
     agg_metrics = {}

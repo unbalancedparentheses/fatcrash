@@ -220,6 +220,23 @@ These 4 methods are disabled in crash detection by default (`--all-methods` to i
 
 The Rust layer also exposes **realized skewness** (rolling third moment / std^3, captures distributional asymmetry) and **absorption ratio** (fraction of variance in top eigenvector of cross-asset correlation matrix, measures systemic coupling). Both are available as `_core` functions but not included in the aggregator — realized skewness overlaps with tail estimators (F1=30% core, drops to 19% extended), and absorption ratio requires multi-asset alignment at test time (F1=29%).
 
+### Tail diagnostics and backtests (2026 papers)
+
+Research primitives in `_core`. They are not in the aggregator and have not been run through the crash-window backtest, so they have no F1 yet. Details and formulas are in [docs/methods.md](docs/methods.md); the PDFs are in `papers/`.
+
+| Method | Function | What it adds | Paper |
+|--------|----------|--------------|-------|
+| Conservative Hill | `conservative_hill` | alpha that overestimates with probability ~delta | Gösgens, van Parys & Zwart 2026 |
+| Reduced-bias EVI | `reduced_bias_evi`, `power_mean_evi`, `lehmer_evi` | Removes Hill's leading bias; flat in k | Henriques-Rodrigues, Caeiro & Gomes 2026 |
+| Tail persistence | `tail_persistence`, `asymptotic_tail_persistence` | ES/VaR ratio; limit 1/(1-xi) | Rawat et al. 2026 |
+| Homogeneity test | `tail_homogeneity_test` | Does alpha really differ across countries/regimes? | Yang 2026 |
+| Lognormal–GPD mixture | `lognormal_gpd_mixture(_var_es)` | Tail index and VaR/ES with no threshold | Bee & Santi 2026 |
+| Extreme expectiles | `expectile_var_es` | Coherent, elicitable tail risk | Daouia, Girard & Stupfler 2018 |
+| Forecast comparison | `compare_quantile_forecasts` | Anytime-valid; n = exceedances | Coelho 2026 |
+| ES e-backtest | `es_e_backtest` | Sequential ES monitoring without VaR | Wang & Yu 2026 |
+
+The accuracy report also prints Wilson 95% intervals for recall, because the effective sample size is the number of crashes (Coelho 2026).
+
 ### Constant volatility strategy
 
 Position sizing via inverse volatility targeting: weight = target_vol / realized_vol. Dalgaard (2016, CBS thesis) tested tail-hedging strategies on S&P 500 data and found that simple put monetization strategies do NOT reduce drawdowns and have LOWER returns/Sharpe than an unhedged index. The constant volatility strategy, however, DOES reduce drawdowns while earning higher returns — mechanically cutting exposure when vol spikes and increasing exposure during calm periods.

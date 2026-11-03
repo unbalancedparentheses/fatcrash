@@ -11,16 +11,20 @@
 //! - [`lppls`] — Log-Periodic Power Law Singularity bubble detection with
 //!   CMA-ES fitting, Sornette filter, and multi-window confidence indicator.
 //! - [`bubble`] — GSADF explosive unit root test (Phillips-Shi-Yu 2015).
+//! - [`backtest`] — Anytime-valid ES e-backtest and tail-forecast comparison
+//!   for rare events.
 //! - [`regime`] — Hamilton 2-state HMM, Critical Slowing Down, realized
 //!   variance (simple, Parkinson, Garman-Klass), and BNS jump decomposition.
 //!
 //! Heavy computations (GSADF Monte Carlo, Hamilton EM restarts, LPPLS
 //! confidence) are parallelized with [`rayon`].
 
+pub mod backtest;
 pub mod bubble;
 pub mod evt;
 pub mod lppls;
 pub mod multiscale;
 pub mod regime;
+pub mod special;
 pub mod tail;
 pub mod utils;

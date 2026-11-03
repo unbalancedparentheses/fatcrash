@@ -27,21 +27,49 @@ pub fn gpd_log_pdf(x: f64, sigma: f64, xi: f64) -> f64 {
 /// `σ_mom = μ(1 - ξ_mom)`. Then runs multi-resolution coordinate descent
 /// with 5 step-size levels scaled to the data mean.
 pub fn gpd_mle(exceedances: &[f64]) -> (f64, f64) {
-    let n = exceedances.len() as f64;
-    let mean = exceedances.iter().sum::<f64>() / n;
-    let var = exceedances.iter().map(|x| (x - mean).powi(2)).sum::<f64>() / n;
+    let ones = vec![1.0; exceedances.len()];
+    gpd_mle_weighted(exceedances, &ones, (-0.49, 2.0), None)
+}
 
-    // Method of moments initial estimate
-    // For GPD: E[X] = sigma/(1-xi), Var[X] = sigma^2/((1-xi)^2*(1-2*xi))
-    // => mean^2/var = 1-2*xi => xi = 0.5*(1 - mean^2/var)
-    let xi_mom = 0.5 * (1.0 - mean * mean / var);
-    let sigma_mom = mean * (1.0 - xi_mom);
+/// Weighted GPD MLE: maximizes `sum w_i log g(x_i; σ, ξ)` with ξ restricted
+/// to the open interval `xi_bounds`. Starts from `init`, or from weighted
+/// method-of-moments estimates when `init` is None. Used as the M-step of
+/// the lognormal–GPD mixture EM.
+pub fn gpd_mle_weighted(
+    x: &[f64],
+    w: &[f64],
+    xi_bounds: (f64, f64),
+    init: Option<(f64, f64)>,
+) -> (f64, f64) {
+    let (xi_lo, xi_hi) = xi_bounds;
+    let w_sum: f64 = w.iter().sum();
+    let mean = x.iter().zip(w).map(|(x, w)| w * x).sum::<f64>() / w_sum;
 
-    let mut sigma = if sigma_mom > 0.0 { sigma_mom } else { mean };
-    let mut xi = xi_mom.clamp(-0.49, 2.0);
+    let (mut sigma, mut xi) = match init {
+        Some(start) => start,
+        None => {
+            let var = x
+                .iter()
+                .zip(w)
+                .map(|(x, w)| w * (x - mean).powi(2))
+                .sum::<f64>()
+                / w_sum;
+            // Method of moments initial estimate
+            // For GPD: E[X] = sigma/(1-xi), Var[X] = sigma^2/((1-xi)^2*(1-2*xi))
+            // => mean^2/var = 1-2*xi => xi = 0.5*(1 - mean^2/var)
+            let xi_mom = 0.5 * (1.0 - mean * mean / var);
+            let sigma_mom = mean * (1.0 - xi_mom);
+            (if sigma_mom > 0.0 { sigma_mom } else { mean }, xi_mom)
+        }
+    };
+    xi = xi.clamp(xi_lo, xi_hi);
 
     let neg_ll = |sigma: f64, xi: f64| -> f64 {
-        let ll: f64 = exceedances.iter().map(|&x| gpd_log_pdf(x, sigma, xi)).sum();
+        let ll: f64 = x
+            .iter()
+            .zip(w)
+            .map(|(&x, &w)| w * gpd_log_pdf(x, sigma, xi))
+            .sum();
         if ll.is_nan() || ll.is_infinite() {
             f64::INFINITY
         } else {
@@ -68,7 +96,7 @@ pub fn gpd_mle(exceedances: &[f64]) -> (f64, f64) {
 
             for &dx in &[-xi_step, xi_step] {
                 let new_xi = xi + dx;
-                if new_xi > -0.49 && new_xi < 2.0 && neg_ll(sigma, new_xi) < neg_ll(sigma, xi) {
+                if new_xi > xi_lo && new_xi < xi_hi && neg_ll(sigma, new_xi) < neg_ll(sigma, xi) {
                     xi = new_xi;
                     improved = true;
                 }

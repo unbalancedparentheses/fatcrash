@@ -1,8 +1,12 @@
 # fatcrash
 
-**71% of countries have exchange rate distributions with infinite variance.**
+**A research toolkit for tail risk, bubble detection, and market regimes.**
 
-The median tail index across 138 countries is alpha = 1.57. Standard risk models assume finite variance (alpha > 2) and often finite kurtosis (alpha > 4). For the majority of the world's currencies, these assumptions are empirically false. fatcrash detects crashes by measuring what actually matters: the tail.
+fatcrash combines tail-index estimators, extreme value methods, and bubble signals in a Rust core with Python bindings and a terminal dashboard.
+
+The project's reported analysis of 138 countries found a median estimated tail index of alpha = 1.57, with 71% of estimates below 2. Under a regularly varying tail model, a true tail index below 2 implies infinite variance. A finite-sample estimate below that threshold does not establish that the underlying distribution has infinite variance.
+
+These results motivate testing the assumptions behind variance-based risk measures. Estimates depend on the sample period, data quality, tail threshold, dependence, and model fit; interpretation requires uncertainty estimates and sensitivity checks. The reported figures are research results, not proof of infinite variance or validated forecasts of future crashes.
 
 Python + Rust (PyO3). 18 crash detection methods across 5 families (14 enabled by default, 4 disabled) + 7 market regime signal families. Tested at 3 window sizes (30d, 60d, 120d) across 37+ assets — crypto, equities, 23 forex pairs, 13 futures, and LBMA gold/silver (1968-2025).
 
@@ -17,7 +21,7 @@ from fatcrash._core import (
 btc = from_sample("btc")
 ret = log_returns(btc)
 
-hill_estimator(ret)      # 2.87 — infinite kurtosis
+hill_estimator(ret)      # 2.87 — estimated alpha; below the fourth-moment threshold
 taleb_kappa(ret)         # (0.34, 0.09) — CLT barely operates
 dfa_exponent(ret)        # 0.56 — persistent dynamics
 deh_estimator(ret)       # 0.31 — heavy-tailed (gamma > 0)
@@ -91,13 +95,13 @@ Fat tails amplify this divergence. When alpha < 2 (infinite variance), the ensem
 
 ### What breaks
 
-Standard risk metrics presuppose:
+Risk measures depend on assumptions that should be checked:
 
-1. **Finite variance** — requires alpha > 2. Violated for 71% of countries.
-2. **Rapid CLT convergence** — requires alpha > 4. Violated for 97% of countries.
-3. **Ergodicity** — ensemble average = time average. Violated for all multiplicative processes with fat tails.
+1. **Finite variance.** Under a regularly varying tail model, a true alpha below 2 implies infinite variance, while alpha above 2 implies finite variance. The reported 71% of estimates below 2 flag a modeling concern; they do not prove that variance is infinite.
+2. **Sampling uncertainty.** The reported 97% of estimates below 4 motivate checking fourth-moment assumptions under the same tail model. Alpha above 4 alone does not guarantee rapid convergence to a Gaussian approximation; dependence and finite-sample behavior also matter.
+3. **Time versus ensemble growth.** Expected wealth and long-run compound growth are different objectives. Their relationship depends on the process and strategy being modeled.
 
-VaR under normality, Sharpe ratios, CAPM betas, mean-variance optimization — all of these produce nonsense when the underlying distribution has infinite variance. fatcrash measures the tail directly so you know which regime you're in.
+Variance-based measures can be unstable or undefined when their population moments do not exist. Gaussian VaR can understate heavy-tail risk even when variance is finite. fatcrash supplies diagnostics for investigating these assumptions; no single estimated tail index establishes the true regime.
 
 ## Methods
 

@@ -324,6 +324,30 @@ def estimate_rv_spike(
     return RVSpikeEstimate(rv_short=rv_short, rv_long=rv_long, ratio=ratio)
 
 
+def estimate_vol_cusum(
+    returns: npt.NDArray[np.float64],
+    window: int = 120,
+    gap: int = 30,
+) -> tuple[float, float]:
+    """CUSUM volatility-shift monitor on the latest window.
+
+    Compares the last `window` returns with the `window` returns that end
+    `gap` days before them (the same layout as the crash-window backtest).
+    Returns (statistic, signal in [0, 1]); (nan, 0.0) without enough history.
+    """
+    from fatcrash._core import vol_cusum
+
+    returns = np.asarray(returns, dtype=np.float64)
+    n = len(returns)
+    window = min(window, max(10, (n - gap) // 2))
+    recent = returns[n - window:]
+    base_end = n - window - gap
+    if base_end < 10:
+        return float("nan"), 0.0
+    baseline = returns[max(0, base_end - window):base_end]
+    return vol_cusum(recent, baseline)
+
+
 def rolling_rv_parkinson(
     high: npt.NDArray[np.float64],
     low: npt.NDArray[np.float64],

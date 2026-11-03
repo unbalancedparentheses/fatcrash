@@ -67,7 +67,10 @@ pub fn default_weights() -> HashMap<&'static str, f64> {
     // Other
     w.insert("multiscale", 0.06);
     // Regime detection algorithms
-    w.insert("rv_spike", 0.03);
+    // rv_spike scored AUC < 0.5 at 30/60d in the crash-window backtest;
+    // replaced by vol_cusum (see analysis/ensemble_variants_check.py).
+    w.insert("rv_spike", 0.0);
+    w.insert("vol_cusum", 0.12);
     w.insert("jump_risk_signal", 0.03);
     w.insert("csd_warning", 0.03);
     w.insert("hamilton_stress", 0.03);
@@ -106,7 +109,7 @@ pub fn confirmation_categories() -> Vec<(&'static str, Vec<&'static str>)> {
             "realized_skewness",
         ]),
         ("Regime shift", vec![
-            "hamilton_stress", "csd_warning", "rv_spike", "dfa_trending",
+            "hamilton_stress", "csd_warning", "rv_spike", "vol_cusum", "dfa_trending",
             "hurst_trending", "spectral_memory",
         ]),
         ("Liquidity", vec!["amihud_spike"]),
@@ -159,7 +162,7 @@ pub fn categories() -> HashMap<&'static str, Vec<&'static str>> {
         "csd_warning", "hamilton_stress",
     ]);
     cats.insert("structure", vec!["multiscale", "lppls_tc_proximity", "velocity_spike"]);
-    cats.insert("risk_premium", vec!["vrp_signal", "rv_spike", "jump_risk_signal"]);
+    cats.insert("risk_premium", vec!["vrp_signal", "rv_spike", "vol_cusum", "jump_risk_signal"]);
     cats.insert("liquidity", vec!["sofr_ois_z", "ted_z", "amihud_pct", "xccy_basis_z", "amihud_spike"]);
     cats.insert("vol_regime", vec!["vix_slope_z", "skew_z", "move_z", "vvix_z"]);
     cats.insert("credit_macro", vec!["ofr_fsi_z", "credit_spread_z", "ebp_z", "yield_curve_z"]);

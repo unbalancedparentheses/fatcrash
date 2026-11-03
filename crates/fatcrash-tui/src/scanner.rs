@@ -355,6 +355,13 @@ fn scan_asset_inner(
         ("Ratio short/long".into(), if rv_long > 0.0 { rv_short / rv_long } else { f64::NAN }),
     ]);
 
+    // 12b. CUSUM volatility-shift monitor: pre window vs baseline window.
+    let cusum = fatcrash_core::regime::vol_cusum::vol_cusum(pre, base, 0.5);
+    record!("vol_cusum", fatcrash_core::regime::vol_cusum::vol_cusum_signal(cusum, pre.len()), vec![
+        ("CUSUM max (pre vs base)".into(), cusum),
+        ("Threshold (2 + 0.2n)".into(), 2.0 + 0.2 * pre.len() as f64),
+    ]);
+
     // 13. Velocity (vol acceleration)
     let velocity = safe_call(|| fatcrash_core::tail::velocity::compute_velocity(pre, 21, 5));
     record!("velocity_spike", signals::velocity_signal(velocity), vec![

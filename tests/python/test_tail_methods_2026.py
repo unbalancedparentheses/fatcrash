@@ -98,3 +98,19 @@ def test_backtests():
     )
     assert n_exc > 0 and decision is not None and decision[1] == 1
     assert lo[-1] <= mean[-1] <= up[-1]
+
+
+def test_vol_cusum_detects_volatility_shift():
+    from fatcrash._core import vol_cusum
+    from fatcrash.indicators.regime_indicator import estimate_vol_cusum
+
+    rng = np.random.default_rng(3)
+    base = rng.normal(0, 0.01, 120)
+    s_calm, sig_calm = vol_cusum(rng.normal(0, 0.01, 120), base)
+    s_hot, sig_hot = vol_cusum(rng.normal(0, 0.02, 120), base)
+    assert s_hot > s_calm and 0 <= sig_calm < sig_hot <= 1
+
+    series = np.concatenate([rng.normal(0, 0.01, 400), rng.normal(0, 0.03, 120)])
+    stat, sig = estimate_vol_cusum(series, window=120)
+    assert sig > 0.5
+    assert np.isnan(estimate_vol_cusum(series[:20])[0])

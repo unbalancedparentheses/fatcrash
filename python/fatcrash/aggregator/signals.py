@@ -72,7 +72,11 @@ DEFAULT_WEIGHTS = {
     # Other
     "multiscale": 0.06,
     # Regime detection algorithms (implemented in Rust)
-    "rv_spike": 0.03,
+    # rv_spike scored AUC < 0.5 at 30/60d in the crash-window backtest; replaced
+    # by vol_cusum (analysis/ensemble_variants_check.py: ensemble AUC +0.039 at
+    # 30d, +0.022 at 120d, quarter-clustered CIs exclude zero).
+    "rv_spike": 0.0,
+    "vol_cusum": 0.12,
     "jump_risk_signal": 0.03,  # legacy BNS fraction — kept for backward compat
     "csd_warning": 0.03,
     "hamilton_stress": 0.03,
@@ -141,7 +145,7 @@ def aggregate_signals(
                    "momentum_reversal", "csd_warning", "hamilton_stress"],
         "structure": ["multiscale", "lppls_tc_proximity", "velocity_spike"],
         # Market regime signal families (macro/microstructure)
-        "risk_premium": ["vrp_signal", "rv_spike", "jump_risk_signal"],
+        "risk_premium": ["vrp_signal", "rv_spike", "vol_cusum", "jump_risk_signal"],
         "liquidity": ["sofr_ois_z", "ted_z", "amihud_pct", "xccy_basis_z"],
         "vol_regime": ["vix_slope_z", "skew_z", "move_z", "vvix_z"],
         "credit_macro": ["ofr_fsi_z", "credit_spread_z", "ebp_z", "yield_curve_z"],

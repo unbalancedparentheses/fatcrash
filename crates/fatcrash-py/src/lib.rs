@@ -17,7 +17,7 @@ use fatcrash_core::lppls::{
 };
 use fatcrash_core::regime::{
     csd as core_csd, hamilton as core_hamilton, jump as core_jump,
-    realized_var as core_realized_var,
+    realized_var as core_realized_var, vol_cusum as core_vol_cusum,
 };
 use fatcrash_core::tail::{
     absorption as core_absorption, amihud as core_amihud, conservative as core_conservative,
@@ -1581,6 +1581,24 @@ fn compare_quantile_forecasts<'py>(py: Python<'py>, y: PyReadonlyArray1<'py, f64
     Ok((PyArray1::from_vec(py, r.lower), PyArray1::from_vec(py, r.upper), PyArray1::from_vec(py, r.mean), r.n_exceedances, r.decision))
 }
 
+/// CUSUM volatility-shift monitor: max Page CUSUM of standardized log squared
+/// returns of `recent` against `baseline`.
+///
+/// Args:
+///     recent: Returns of the window being monitored.
+///     baseline: Returns of an earlier reference window.
+///     allowance: CUSUM drift k (default: 0.5).
+///
+/// Returns:
+///     (statistic, signal in [0, 1]).
+#[pyfunction]
+#[pyo3(signature = (recent, baseline, allowance=0.5))]
+fn vol_cusum(recent: PyReadonlyArray1<'_, f64>, baseline: PyReadonlyArray1<'_, f64>, allowance: f64) -> PyResult<(f64, f64)> {
+    let recent = recent.as_slice()?;
+    let s = core_vol_cusum::vol_cusum(recent, baseline.as_slice()?, allowance);
+    Ok((s, core_vol_cusum::vol_cusum_signal(s, recent.len())))
+}
+
 // ── Module registration ──────────────────────────────────
 
 #[pymodule]
@@ -1630,6 +1648,8 @@ fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(asymptotic_tail_persistence, m)?)?;
     m.add_function(wrap_pyfunction!(tail_homogeneity_test, m)?)?;
     m.add_function(wrap_pyfunction!(tail_homogeneity_covariate_test, m)?)?;
+
+    m.add_function(wrap_pyfunction!(vol_cusum, m)?)?;
 
     // Backtesting
     m.add_function(wrap_pyfunction!(es_e_backtest, m)?)?;

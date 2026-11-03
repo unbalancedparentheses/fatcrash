@@ -145,7 +145,7 @@ def detect(
     # Regime detection
     try:
         from fatcrash.indicators.regime_indicator import (
-            estimate_rv_spike, estimate_csd_on_vol, estimate_hamilton,
+            estimate_rv_spike, estimate_vol_cusum, estimate_csd_on_vol, estimate_hamilton,
         )
 
         # Multi-timeframe RV spike: fast and slow scales
@@ -165,6 +165,13 @@ def detect(
                 f"short={best_spike.rv_short:.4f}",
                 spike_status,
             )
+
+        cusum_stat, cusum_sig = estimate_vol_cusum(returns)
+        if not np.isnan(cusum_stat):
+            cusum_status = "[red]!!![/]" if cusum_sig > 0.7 else (
+                "[yellow]![/]" if cusum_sig > 0.5 else "[green]OK[/]"
+            )
+            table.add_row("Vol CUSUM", f"{cusum_sig:.2f}", f"max S={cusum_stat:.1f}", cusum_status)
 
         csd = estimate_csd_on_vol(returns, rv_window=21, csd_window=63, roc_window=21)
         if csd is not None:
@@ -237,7 +244,7 @@ def backtest(
     from fatcrash.data import transforms
     from fatcrash.indicators.tail_indicator import rolling_tail_index, rolling_kappa, rolling_taleb_kappa
     from fatcrash.indicators.evt_indicator import rolling_var_es
-    from fatcrash.indicators.regime_indicator import rolling_rv, estimate_hamilton
+    from fatcrash.indicators.regime_indicator import rolling_rv, estimate_hamilton, estimate_vol_cusum
     from fatcrash.aggregator.signals import (
         aggregate_signals,
         hill_thinning_signal,
@@ -304,6 +311,10 @@ def backtest(
 
         if not np.isnan(rv_short_arr[i]) and not np.isnan(rv_long_arr[i]):
             components["rv_spike"] = rv_spike_signal(rv_short_arr[i], rv_long_arr[i])
+
+        cusum_stat, cusum_sig = estimate_vol_cusum(returns[: i + 1], window=window)
+        if not np.isnan(cusum_stat):
+            components["vol_cusum"] = cusum_sig
 
         if i < len(hmm_probs) and not np.isnan(hmm_probs[i]):
             components["hamilton_stress"] = hamilton_stress_signal(hmm_probs[i])

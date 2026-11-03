@@ -313,3 +313,10 @@ def compare_quantile_forecasts(
     int,
     tuple[int, int] | None,
 ]: ...
+
+# Volatility-shift monitor
+def vol_cusum(
+    recent: npt.NDArray[np.float64],
+    baseline: npt.NDArray[np.float64],
+    allowance: float = 0.5,
+) -> tuple[float, float]: ...

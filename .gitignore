@@ -38,3 +38,4 @@ data/cache/
 # Env
 .env
 .env.*
+analysis/.ensemble_components.pkl

@@ -42,7 +42,7 @@ def create_app() -> FastAPI:
         from fatcrash.data import ingest, transforms
         from fatcrash.indicators.tail_indicator import estimate_tail_index, estimate_kappa, estimate_taleb_kappa
         from fatcrash.indicators.evt_indicator import compute_var_es
-        from fatcrash.indicators.regime_indicator import estimate_rv_spike, estimate_hamilton
+        from fatcrash.indicators.regime_indicator import estimate_rv_spike, estimate_vol_cusum, estimate_hamilton
         from fatcrash.aggregator.signals import (
             aggregate_signals,
             rv_spike_signal,
@@ -113,6 +113,13 @@ def create_app() -> FastAPI:
                 pass
         if rv_best > 0:
             components["rv_spike"] = rv_best
+
+        try:
+            cusum_stat, cusum_sig = estimate_vol_cusum(returns)
+            if not np.isnan(cusum_stat):
+                components["vol_cusum"] = cusum_sig
+        except Exception:
+            pass
 
         try:
             if len(returns) > 100:

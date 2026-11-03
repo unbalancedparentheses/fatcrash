@@ -10,7 +10,8 @@ Run:
     python analysis/tail_methods_2026_backtest.py
 
 Datasets are those available locally: bundled BTC/SPY/Gold, plus FRED forex
-and LBMA from ~/projects/forex-centuries if present. Databento futures and
+and LBMA from ~/projects/forex-centuries and QQQ/IWM from
+~/projects/options_portfolio_backtester if present. Databento futures and
 options-backtester series are used only if their directories exist.
 
 All numbers are in-sample on historical data. This is not financial advice.
@@ -20,6 +21,7 @@ import sys
 from pathlib import Path
 
 import numpy as np
+import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).parent))
 
@@ -166,6 +168,17 @@ def iter_datasets():
                 df = from_csv(str(path), date_col="date", price_col="close")
                 if len(df) >= 60:
                     yield "OptsBT", fname, df, 0.08, 30, 10
+    # Full QQQ/IWM histories from options_portfolio_backtester (gitignored there;
+    # fetch with its `scripts/fetch_data.py all --symbols QQQ IWM`). SPX files are
+    # skipped because they duplicate the bundled SPY crashes.
+    obt_dir = Path("/Users/unbalancedparen/projects/options_portfolio_backtester/data/processed")
+    for fname, price_col, display in [("qqq_stocks.csv", "adjClose", "QQQ"), ("iwm_stocks.csv", "close", "IWM")]:
+        path = obt_dir / fname
+        if path.exists():
+            raw = pd.read_csv(path, parse_dates=["date"])
+            df = (raw[["date", price_col, "volume"]].rename(columns={price_col: "close"})
+                  .dropna(subset=["close"]).set_index("date").sort_index())
+            yield "Equity ETF", display, df, 0.08, 90, 20
     if _DATABENTO_DIR.is_dir():
         for fname, root, display, min_dd in _DATABENTO_FUTURES:
             path = _DATABENTO_DIR / fname

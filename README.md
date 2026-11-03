@@ -177,7 +177,9 @@ Detects transitions in market dynamics — from calm to turbulent, mean-revertin
 
 **Critical Slowing Down** (Scheffer et al., 2009). Near a tipping point, systems recover more slowly. Observable: rising AR(1) coefficient AND rising variance simultaneously. Applied to the *volatility* series (rolling RV), not raw returns — raw returns have near-zero autocorrelation. Volatility has strong clustering, so CSD on the vol series detects genuine regime transitions. F1=42%, 50% recall.
 
-**RV Spike.** Compares short-term realized variance to a long-term baseline: `ratio = RV_short / RV_long`. Runs multi-timeframe (fast: 7/21d, slow: 21/63d), taking the max signal. When ratio > 2x, volatility is spiking. F1=38%, 68% recall.
+**RV Spike.** Compares short-term realized variance to a long-term baseline: `ratio = RV_short / RV_long`. Runs multi-timeframe (fast: 7/21d, slow: 21/63d), taking the max signal. When ratio > 2x, volatility is spiking. F1=38%, 68% recall. *Weight now 0:* as an ensemble component its value scored AUC 0.46 / 0.45 / 0.51 at 30 / 60 / 120d (no better than chance), so the CUSUM monitor below replaces it (see [Improving the ensemble](#improving-the-ensemble)).
+
+**Vol CUSUM** (`vol_cusum`). Sequential volatility-shift monitor in the spirit of Horváth, Trapani & Wang (2024). It standardizes log squared returns of the recent window by their mean and std in an earlier baseline window, then runs a one-sided Page CUSUM `S_t = max(0, S_{t-1} + u_t − 0.5)`. Signal = `max S_t / (2 + 0.2n)`, clipped to [0, 1]. It accumulates evidence of a *sustained* rise in volatility and ignores one-day spikes. Single-signal AUC 0.61 / 0.65 / 0.69 at 30 / 60 / 120d. Weight 0.12, in the same category as RV spike.
 
 **Hamilton Filter** (Hamilton, 1989). 2-state Gaussian HMM with EM estimation (Baum-Welch), Kim (1994) smoother, and proper joint smoothed probabilities for transition M-step. 10 parallel random restarts to avoid local optima. State 1 is always the stressed (higher volatility) regime. Overall F1=37%, but **88% recall on major (>30%) crashes**. Backward-looking: it confirms you're in a crisis, it doesn't predict one.
 
@@ -239,33 +241,61 @@ The accuracy report also prints Wilson 95% intervals for recall, because the eff
 
 #### Crash-window results
 
-`python analysis/tail_methods_2026_backtest.py` scores the new methods on the same crash and non-crash windows as the accuracy report. Each method compares the pre-peak window with an earlier baseline window of the same length. Hill, DEH, QQ, Pickands and GPD VaR are re-scored on the same windows. Data: BTC/SPY/Gold, 23 FRED forex pairs, and LBMA gold/silver (114–119 crash and 650 non-crash windows per window size). The Databento futures and options-backtester series are not public, so these numbers are not comparable to the tables above.
+`python analysis/tail_methods_2026_backtest.py` scores the new methods on the same crash and non-crash windows as the accuracy report. Each method compares the pre-peak window with an earlier baseline window of the same length. Hill, DEH, QQ, Pickands and GPD VaR are re-scored on the same windows. Data: BTC/SPY/Gold, 23 FRED forex pairs and LBMA gold/silver from [forex-centuries](https://github.com/unbalancedparentheses/forex-centuries), and full QQQ (2011–2024) and IWM (2008–2024) histories from options_portfolio_backtester. That gives 142–151 crash and 690 non-crash windows per window size. The QQQ/IWM files are gitignored in that repo; fetch them with its `python scripts/fetch_data.py all --symbols QQQ IWM`. Its SPX files are skipped because they repeat the bundled SPY crashes. The Databento futures are not available locally, so these numbers are not comparable to the tables above.
 
-Every method's precision sits near the 15% base rate, so F1 alone hides the question that matters: does the signal fire more often before crashes than at other times? The table shows **lift** = recall − false-positive rate, with a two-proportion test (p-values are optimistic because forex pairs share crises).
+Every method's precision sits near the 17% base rate, so F1 alone hides the question that matters: does the signal fire more often before crashes than at other times? The table shows **lift** = recall − false-positive rate, with a two-proportion test (p-values are optimistic because forex pairs share crises).
 
 | Method | Lift 30d | Lift 60d | Lift 120d | F1 120d |
 |--------|----------|----------|-----------|---------|
-| Hill (existing) | −18% (p<0.001) | −3% | 0% | 23% |
-| Conservative Hill | −16% (p=0.002) | −4% | 0% | 23% |
-| RB Hill / NRB power mean / RB Lehmer | −14% to −18% | −3% to −4% | +1% to +8% (n.s.) | 23–27% |
-| Tail persistence | −8% | −6% | +2% | 24% |
-| Lognormal–GPD mixture ξ | — | — | +6% (n.s.) | 23% |
-| Homogeneity-gated thickening | −2% | +4% (p=0.04) | −1% | 7% |
-| Expectile ES | +9% (n.s.) | +12% (p=0.02) | +17% (p=0.001) | 30% |
-| GPD VaR (existing) | — | — | +24% (p<0.001) | 25% |
+| Hill (existing) | −17% (p<0.001) | 0% | 0% | 25% |
+| Conservative Hill | −15% (p=0.001) | −1% | 0% | 25% |
+| RB Hill / NRB power mean / RB Lehmer | −13% to −18% | −1% to 0% | −1% to +6% (n.s.) | 25–28% |
+| Tail persistence | −7% | −2% | +3% | 27% |
+| Lognormal–GPD mixture ξ | — | — | +5% (n.s.) | 24% |
+| Homogeneity-gated thickening | −2% | +3% | −2% | 6% |
+| Expectile ES | +3% (n.s.) | +5% (n.s.) | +14% (p=0.003) | 32% |
+| GPD VaR (existing) | — | — | +20% (p=0.001) | 27% |
 
-- **Tail-shape estimators do not anticipate crashes, old or new.** At 30d, the Hill family fires *less* often before crashes than at random times. Windows that end at a peak are usually calm run-ups, so tails look thinner just before the drop. Removing Hill's bias does not change this.
+- **Tail-shape estimators do not anticipate crashes, old or new.** At 30d, the Hill family fires *less* often before crashes than at random times; at 60–120d it is no better than chance. Windows that end at a peak are usually calm run-ups, so tails look thinner just before the drop. Removing Hill's bias does not change this.
 - **Conservative Hill gives the same detections as Hill.** With equal-length windows the rescaling constant is the same in both, so it only matters for absolute claims (e.g. "alpha < 2 at 95% confidence").
 - **The mixture's ξ hits its lower bound in 64% of windows.** With 60–120 days of losses, body and tail cannot be separated, so use it on full histories.
 - **Expectile ES has lift, but almost all of it is volatility.** `python analysis/expectile_es_check.py` compares it with a plain volatility ratio (std of the pre-crash window / std of the baseline), using AUC and logistic likelihood-ratio tests:
 
 | Window | AUC vol ratio | AUC expectile ES | AUC GPD VaR | AUC RV spike | ES adds to vol? |
 |--------|---------------|------------------|-------------|--------------|-----------------|
-| 30d | 0.58 | 0.55 (48 of 119 windows) | — | — | No (p=0.36) |
-| 60d | 0.65 | 0.62 | — | — | Marginal (p=0.03) |
-| 120d | **0.69** | 0.61 | 0.67 (62 windows) | 0.56 | No (p=0.49) |
+| 30d | 0.55 | 0.50 (69 of 151 windows) | — | — | No (p=0.48) |
+| 60d | 0.61 | 0.57 | — | — | Marginal (p=0.06) |
+| 120d | **0.65** | 0.58 | 0.64 (80 windows) | 0.54 | No (p=0.24) |
 
-  The ES ratio correlates 0.64–0.75 with volatility at 120d. Once volatility is known, ES adds nothing at 30d or 120d, and only a marginal amount at 60d, where the p-value is optimistic because windows overlap. **Conclusion: do not add expectile ES to the ensemble.** It is a fine coherent risk *measure*, not a crash predictor. The more useful finding is that a plain volatility ratio (AUC 0.69, +24% lift at 120d) beats the existing RV-spike signal (AUC 0.56) on these windows.
+  The ES ratio correlates 0.64–0.75 with volatility at 120d. Once volatility is known, ES adds nothing, apart from a marginal amount at 60d where the p-value is optimistic because windows overlap. **Conclusion: do not add expectile ES to the ensemble.** It is a fine coherent risk *measure*, not a crash predictor. The more useful finding is that volatility change beats the existing RV-spike signal, which led to the ensemble test below.
+
+#### Improving the ensemble
+
+`python analysis/ensemble_variants_check.py` runs the full method suite on the same windows, caches the aggregator components (about 10 minutes the first time), and tests candidate predictors. Because windows from the same crisis are not independent ([Shi, Zhang & Shi 2026](https://arxiv.org/abs/2609.30721)), all confidence intervals come from a bootstrap that resamples **calendar quarters**, and ensemble differences are paired.
+
+Single-signal AUC (quarter-clustered 95% CI):
+
+| Signal | 30d | 60d | 120d |
+|--------|-----|-----|------|
+| RV spike (existing) | 0.46 (0.38–0.54) | 0.45 (0.38–0.53) | 0.51 (0.44–0.58) |
+| GSADF (existing) | — | 0.58 (0.53–0.63) | 0.66 (0.59–0.72) |
+| Volatility ratio | 0.55 (0.48–0.61) | 0.61 (0.54–0.68) | 0.64 (0.57–0.70) |
+| **Vol CUSUM** | **0.61 (0.54–0.69)** | **0.65 (0.57–0.73)** | **0.69 (0.61–0.75)** |
+| Vol-normalized GSADF ([Boswijk, Yu & Zu](https://arxiv.org/abs/2405.02087)) | — | 0.56 (0.49–0.62) | 0.58 (0.51–0.65) |
+
+Ensemble AUC change versus the previous ensemble (paired, quarter-clustered 95% CI):
+
+| Change | 30d | 60d | 120d | Decision |
+|--------|-----|-----|------|----------|
+| Ensemble before this change (AUC) | 0.687 | 0.728 | 0.747 | — |
+| **Vol CUSUM replaces RV spike (weight 0.12)** | **+0.039 (+0.011 to +0.076)** | +0.010 (−0.010 to +0.032) | **+0.022 (+0.003 to +0.042)** | **Adopted** |
+| Volatility ratio replaces RV spike (weight 0.03 / 0.12) | +0.002 / +0.006 | +0.003 / 0.000 | +0.009 / +0.009 | Not adopted (n.s.) |
+| Vol-normalized GSADF replaces GSADF | — | **−0.023** (−0.035 to −0.007) | **−0.024** (−0.039 to −0.011) | Rejected |
+| Drop Pickands / DEH / QQ | −0.013 (−0.034 to +0.003) | +0.004 | +0.002 | Kept (no evidence either way) |
+
+- **Vol CUSUM is now live** in the Python aggregator, the Rust TUI (Regime shift category), the CLI and the API, with weight 0.12; RV spike stays visible at weight 0.
+- **Normalizing GSADF by volatility makes it worse.** Part of what GSADF picks up before crashes *is* the volatility build-up, so removing it removes signal.
+- **The CUSUM threshold and the 0.12 weight were chosen with these windows in view** (two weights were tried), and every number here is still in-sample. A chronological out-of-sample test is the next step before trusting the size of the gain.
 
 ### Constant volatility strategy
 
@@ -742,7 +772,7 @@ cargo run -p fatcrash-tui -- cache-clear                # clear cached data
 | Category | Signals | What it confirms |
 |----------|---------|-----------------|
 | Tail risk | Kappa, Taleb kappa, Hill, Pickands, DEH, QQ, MaxSum, GPD, Skewness | Tail thickening |
-| Regime shift | Hamilton, CSD, RV spike, DFA, Hurst, Spectral | Regime transition |
+| Regime shift | Hamilton, CSD, RV spike, Vol CUSUM, DFA, Hurst, Spectral | Regime transition |
 | Liquidity | Amihud | Liquidity dry-up |
 | Jump risk | BNS jump test | Discontinuous dynamics |
 | Momentum | Momentum reversal, Velocity, Multiscale | Trend exhaustion |

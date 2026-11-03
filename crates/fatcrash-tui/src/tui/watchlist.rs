@@ -350,6 +350,7 @@ fn short_method_name(key: &str) -> &'static str {
         "hamilton_stress" => "Hamilton",
         "csd_warning" => "CSD",
         "rv_spike" => "RV Spike",
+        "vol_cusum" => "Vol CUSUM",
         "velocity_spike" => "Velocity",
         "amihud_spike" => "Amihud",
         "momentum_reversal" => "Momentum",

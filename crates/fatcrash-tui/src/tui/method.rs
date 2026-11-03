@@ -106,6 +106,14 @@ fn method_description(key: &str) -> &'static str {
             "This is the simplest volatility regime indicator — it doesn't model regimes explicitly, ",
             "just detects whether current vol is elevated. Often the first signal to fire in a sell-off.",
         ),
+        "vol_cusum" => concat!(
+            "CUSUM volatility-shift monitor. Standardizes log squared returns of the pre-crash window ",
+            "by the mean and std of log squared returns in the baseline window, then runs a one-sided ",
+            "Page CUSUM S_t = max(0, S_{t-1} + u_t - 0.5). The statistic is max S_t; the signal is ",
+            "max S_t / (2 + 0.2 n), clipped to [0, 1]. It accumulates evidence of a sustained rise in ",
+            "volatility and ignores isolated spikes. In the crash-window backtest it replaced RV spike ",
+            "(which scored below chance) and raised ensemble AUC by +0.04 at 30d and +0.02 at 120d.",
+        ),
         "velocity_spike" => concat!(
             "Volatility velocity (vol-of-vol proxy). Computes the fractional change in realized volatility: ",
             "v = (vol_current - vol_past) / vol_past, where vol = sqrt(sum(r^2) / window). ",

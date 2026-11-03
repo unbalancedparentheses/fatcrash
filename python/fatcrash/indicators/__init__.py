@@ -47,7 +47,7 @@ from fatcrash.indicators.lppls_indicator import (
 
 from fatcrash.indicators.regime_indicator import (
     estimate_realized_variance,
-    estimate_rv_spike,
+    estimate_rv_spike, estimate_vol_cusum,
     estimate_jump_risk,
     estimate_jump_test,
     estimate_csd,
@@ -85,7 +85,7 @@ __all__ = [
     # LPPLS
     "fit_lppls", "compute_confidence",
     # Regime detection
-    "estimate_realized_variance", "estimate_rv_spike",
+    "estimate_realized_variance", "estimate_rv_spike", "estimate_vol_cusum",
     "estimate_jump_risk", "estimate_jump_test",
     "estimate_csd", "estimate_csd_on_vol",
     "estimate_hamilton",

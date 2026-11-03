@@ -31,7 +31,7 @@ from fatcrash._core import (
     dfa_exponent, deh_estimator, qq_estimator, maxsum_ratio, spectral_exponent,
     lppls_confidence,
     realized_variance, bipower_variation, jump_variance,
-    amihud_illiquidity,
+    amihud_illiquidity, vol_cusum,
 )
 from fatcrash.indicators.regime_indicator import estimate_hamilton, estimate_csd_on_vol, estimate_rv_spike
 from fatcrash.aggregator import signals as sig
@@ -456,6 +456,14 @@ def test_method_on_drawdown(df, peak_idx, window=120,
     results["rv_spike"] = rv_detected
     if rv_signal_best > 0:
         components["rv_spike"] = rv_signal_best
+
+    # CUSUM volatility-shift monitor: pre window vs baseline window.
+    cusum_stat, cusum_sig = vol_cusum(pre_ret, base_ret)
+    if np.isnan(cusum_stat):
+        results["vol_cusum"] = None
+    else:
+        results["vol_cusum"] = cusum_sig > 0.5
+        components["vol_cusum"] = cusum_sig
 
     # Hamilton filter
     try:
@@ -1163,7 +1171,7 @@ def main():
         "lppls", "lppls_confidence",
         "kappa", "taleb_kappa", "pickands", "deh", "qq",
         "gpd_var", "maxsum", "hill",
-        "rv_spike", "hamilton", "csd",
+        "rv_spike", "vol_cusum", "hamilton", "csd",
         "amihud",
         # Disabled by default — include only with --all-methods
         "hurst", "gsadf", "dfa", "spectral",

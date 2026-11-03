@@ -10,8 +10,11 @@
 //!   All annualized with a 252-day convention.
 //! - [`jump`] — BNS jump decomposition: bipower variation, tripower
 //!   quarticity, and the Barndorff-Nielsen & Shephard z-test for jumps.
+//! - [`vol_cusum`] — Page CUSUM of standardized log squared returns against
+//!   a baseline window (sequential volatility-shift monitor).
 
 pub mod csd;
 pub mod hamilton;
 pub mod jump;
 pub mod realized_var;
+pub mod vol_cusum;

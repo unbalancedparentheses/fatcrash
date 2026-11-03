@@ -339,6 +339,21 @@ $$\text{ratio} = \frac{RV_{\text{short}}}{RV_{\text{long}}}$$
 - ratio $> 2$: Volatility spiking — regime change onset
 - ratio $> 3$: Severe spike
 
+
+### Vol CUSUM
+
+**What it measures:** A sustained rise in volatility relative to an earlier baseline window.
+
+**Formula:** With $\ell_t = \log(r_t^2 + 10^{-12})$, standardized by the baseline mean and std, $u_t = (\ell_t - \bar\ell_{base}) / s_{base}$:
+
+$$S_t = \max(0,\ S_{t-1} + u_t - 0.5), \qquad \text{signal} = \mathrm{clip}\!\left(\frac{\max_t S_t}{2 + 0.2n},\ 0,\ 1\right)$$
+
+**Python:** `vol_cusum(recent, baseline)` → `(statistic, signal)`; `estimate_vol_cusum(returns, window=120)` for the latest window.
+
+**Evidence:** Single-signal AUC 0.61 / 0.65 / 0.69 at 30 / 60 / 120d. Replacing RV spike with it (weight 0.12) raised ensemble AUC by +0.039 at 30d and +0.022 at 120d, with quarter-clustered CIs excluding zero (`analysis/ensemble_variants_check.py`). In-sample.
+
+**Reference:** In the spirit of Horváth, L., Trapani, L. & Wang, S. (2024). "Sequential monitoring for explosive volatility regimes." arXiv:2404.17885 (no GARCH fit here).
+
 ### Hamilton Filter
 
 **What it measures:** 2-state Gaussian HMM. Classifies the current observation into normal or stressed regime.

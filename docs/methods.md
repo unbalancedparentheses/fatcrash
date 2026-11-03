@@ -437,7 +437,7 @@ When comparing tail forecasts, the score difference is known in advance on every
 
 ### Crash-window backtest of the 2026 methods
 
-See the README section "Crash-window results" and `analysis/tail_methods_2026_backtest.py`. In short, the tail-shape estimators (conservative Hill, reduced-bias EVI, tail persistence, mixture ξ, homogeneity gating) have zero or negative lift before crashes. Expectile ES has positive lift (+17% at 120d) and complements GPD VaR.
+See the README section "Crash-window results" and `analysis/tail_methods_2026_backtest.py`. In short, the tail-shape estimators (conservative Hill, reduced-bias EVI, tail persistence, mixture ξ, homogeneity gating) have zero or negative lift before crashes. Expectile ES has positive lift (+17% at 120d), but `analysis/expectile_es_check.py` shows that lift is volatility: a plain volatility ratio has higher AUC (0.69 vs 0.61), and ES adds no information once volatility is known.
 
 ## Signal Aggregation
 

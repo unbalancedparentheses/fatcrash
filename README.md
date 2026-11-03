@@ -251,13 +251,21 @@ Every method's precision sits near the 15% base rate, so F1 alone hides the ques
 | Tail persistence | −8% | −6% | +2% | 24% |
 | Lognormal–GPD mixture ξ | — | — | +6% (n.s.) | 23% |
 | Homogeneity-gated thickening | −2% | +4% (p=0.04) | −1% | 7% |
-| **Expectile ES** | +9% (n.s.) | **+12% (p=0.02)** | **+17% (p=0.001)** | **30%** |
+| Expectile ES | +9% (n.s.) | +12% (p=0.02) | +17% (p=0.001) | 30% |
 | GPD VaR (existing) | — | — | +24% (p<0.001) | 25% |
 
 - **Tail-shape estimators do not anticipate crashes, old or new.** At 30d, the Hill family fires *less* often before crashes than at random times. Windows that end at a peak are usually calm run-ups, so tails look thinner just before the drop. Removing Hill's bias does not change this.
 - **Conservative Hill gives the same detections as Hill.** With equal-length windows the rescaling constant is the same in both, so it only matters for absolute claims (e.g. "alpha < 2 at 95% confidence").
 - **The mixture's ξ hits its lower bound in 64% of windows.** With 60–120 days of losses, body and tail cannot be separated, so use it on full histories.
-- **Expectile ES is the one useful new signal.** It measures loss size, not tail shape, so it belongs with GPD VaR in the risk family. It covers more windows: GPD VaR has a result on only 62 of the 114 crash windows at 120d, and none at 60d.
+- **Expectile ES has lift, but almost all of it is volatility.** `python analysis/expectile_es_check.py` compares it with a plain volatility ratio (std of the pre-crash window / std of the baseline), using AUC and logistic likelihood-ratio tests:
+
+| Window | AUC vol ratio | AUC expectile ES | AUC GPD VaR | AUC RV spike | ES adds to vol? |
+|--------|---------------|------------------|-------------|--------------|-----------------|
+| 30d | 0.58 | 0.55 (48 of 119 windows) | — | — | No (p=0.36) |
+| 60d | 0.65 | 0.62 | — | — | Marginal (p=0.03) |
+| 120d | **0.69** | 0.61 | 0.67 (62 windows) | 0.56 | No (p=0.49) |
+
+  The ES ratio correlates 0.64–0.75 with volatility at 120d. Once volatility is known, ES adds nothing at 30d or 120d, and only a marginal amount at 60d, where the p-value is optimistic because windows overlap. **Conclusion: do not add expectile ES to the ensemble.** It is a fine coherent risk *measure*, not a crash predictor. The more useful finding is that a plain volatility ratio (AUC 0.69, +24% lift at 120d) beats the existing RV-spike signal (AUC 0.56) on these windows.
 
 ### Constant volatility strategy
 

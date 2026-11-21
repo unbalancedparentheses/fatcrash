@@ -1,5 +1,3 @@
-use crate::utils::ols_slope;
-
 /// Detrended Fluctuation Analysis (DFA).
 ///
 /// Alternative to Hurst R/S that handles non-stationarity better.
@@ -16,15 +14,6 @@ pub fn compute_dfa(data: &[f64]) -> f64 {
         return f64::NAN;
     }
 
-    // Compute cumulative sum (profile)
-    let mean = data.iter().sum::<f64>() / n as f64;
-    let mut profile = Vec::with_capacity(n);
-    let mut running = 0.0;
-    for &x in data {
-        running += x - mean;
-        profile.push(running);
-    }
-
     // Generate window sizes from 4 up to n/4 (factor 1.5 spacing)
     let mut sizes: Vec<usize> = Vec::new();
     let mut s = 4;
@@ -38,71 +27,19 @@ pub fn compute_dfa(data: &[f64]) -> f64 {
         return f64::NAN;
     }
 
-    let mut log_s: Vec<f64> = Vec::new();
-    let mut log_f: Vec<f64> = Vec::new();
+    // Segments are taken from both ends of the profile (Kantelhardt et al. 2002),
+    // so the n % size points at the end are not dropped.
+    mfdfa::dfa_hurst(data, &sizes, 1).unwrap_or(f64::NAN)
+}
 
-    for &size in &sizes {
-        let n_windows = n / size;
-        if n_windows == 0 {
-            continue;
-        }
-
-        let mut var_sum = 0.0;
-        let mut valid = 0;
-
-        for w in 0..n_windows {
-            let start = w * size;
-            let end = start + size;
-            let window = &profile[start..end];
-
-            // Fit linear trend via OLS: y = a + b*x
-            let s_f = size as f64;
-            let x_mean = (s_f - 1.0) / 2.0;
-            let mut cov = 0.0;
-            let mut var_x = 0.0;
-            let y_mean: f64 = window.iter().sum::<f64>() / s_f;
-
-            for (j, &y) in window.iter().enumerate() {
-                let xj = j as f64;
-                cov += (xj - x_mean) * (y - y_mean);
-                var_x += (xj - x_mean).powi(2);
-            }
-
-            if var_x < 1e-15 {
-                continue;
-            }
-
-            let slope = cov / var_x;
-            let intercept = y_mean - slope * x_mean;
-
-            // Variance of detrended residuals per Peng et al. (1994)
-            let mut sq_sum = 0.0;
-            for (j, &y) in window.iter().enumerate() {
-                let trend = intercept + slope * j as f64;
-                sq_sum += (y - trend).powi(2);
-            }
-            let box_var = sq_sum / s_f;
-            if box_var > 0.0 {
-                var_sum += box_var;
-                valid += 1;
-            }
-        }
-
-        if valid > 0 {
-            // F(n) = sqrt(mean of per-box variances)
-            let f_n = (var_sum / valid as f64).sqrt();
-            if f_n > 0.0 {
-                log_s.push((size as f64).ln());
-                log_f.push(f_n.ln());
-            }
-        }
-    }
-
-    if log_s.len() < 3 {
-        return f64::NAN;
-    }
-
-    ols_slope(&log_s, &log_f)
+/// Multifractal DFA-1 spectrum: h(q), tau(q), alpha and f(alpha) over q in [-5, 5].
+///
+/// `spectrum.width()` near 0 means monofractal; a wide spectrum means the
+/// small and large fluctuations scale differently (intermittent, crash-prone).
+/// Returns `None` when the series is too short or degenerate.
+pub fn compute_mfdfa(data: &[f64]) -> Option<mfdfa::MfdfaSpectrum> {
+    let scales = mfdfa::default_scales(data.len(), 1);
+    mfdfa::mfdfa(data, &mfdfa::default_q(), &scales, 1).ok()
 }
 
 /// Compute DFA exponent for the given data.
@@ -176,5 +113,50 @@ mod tests {
         let data = vec![1.0; 10];
         let alpha = compute_dfa(&data);
         assert!(alpha.is_nan(), "Should be NaN with only 10 points");
+    }
+
+    #[test]
+    fn test_mfdfa_spectrum_width() {
+        use rand::prelude::*;
+        use rand_distr::StandardNormal;
+
+        let mut rng = StdRng::seed_from_u64(7);
+        let n = 4096;
+        let noise: Vec<f64> = (0..n)
+            .map(|_| rng.sample::<f64, _>(StandardNormal))
+            .collect();
+
+        // Binomial multiplicative cascade (p = 0.3): a textbook multifractal.
+        let levels = 12;
+        let mut cascade = vec![1.0f64];
+        for _ in 0..levels {
+            cascade = cascade.iter().flat_map(|&m| [m * 0.3, m * 0.7]).collect();
+        }
+
+        let mono = compute_mfdfa(&noise).expect("noise spectrum");
+        let multi = compute_mfdfa(&cascade).expect("cascade spectrum");
+        assert!((mono.hurst() - 0.5).abs() < 0.1, "h(2) = {}", mono.hurst());
+        assert!(mono.width() < 0.4, "noise width = {}", mono.width());
+        assert!(
+            multi.width() > 2.0 * mono.width(),
+            "cascade width {} vs noise {}",
+            multi.width(),
+            mono.width()
+        );
+    }
+
+    #[test]
+    fn test_dfa_uses_tail_points() {
+        use rand::prelude::*;
+        use rand_distr::StandardNormal;
+
+        // 4096 + 7 points: the last 7 fall outside every forward-only window.
+        let mut rng = StdRng::seed_from_u64(3);
+        let mut data: Vec<f64> = (0..4096)
+            .map(|_| rng.sample::<f64, _>(StandardNormal))
+            .collect();
+        let base = compute_dfa(&data);
+        data.extend([50.0, -50.0, 50.0, -50.0, 50.0, -50.0, 50.0]);
+        assert_ne!(compute_dfa(&data), base);
     }
 }

@@ -11,3 +11,4 @@ nalgebra = { workspace = true }
 rayon = { workspace = true }
 rand = { workspace = true }
 rand_distr = { workspace = true }
+mfdfa = "0.1.1"
